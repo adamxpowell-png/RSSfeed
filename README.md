@@ -79,7 +79,44 @@ A simple, self-hosted RSS feed monitoring tool with daily email digests via Rese
 - **Daily Digest**: Automatically sent at 8 AM UTC (configure in `src/scheduler.js`)
 - **Send Now**: Click "Send Digest" to manually trigger email
 
+### Deep-Link API Endpoint
+
+Add feeds from external websites and applications using the `/add` endpoint:
+
+```
+GET /add?url=<feed-url>&title=<optional-title>
+```
+
+**Example:**
+```
+https://yourdomain.com/add?url=https://example.com/feed.xml
+https://yourdomain.com/add?url=https://news.ycombinator.com/rss&title=Hacker%20News
+```
+
+The endpoint serves the main page with the feed URL pre-filled in the form and the add feed modal automatically opened.
+
+### Browser Extension
+
+Install the "Add to RSS Reader" browser extension for one-click feed subscription:
+
+1. **Load the extension:**
+   - Chrome: `chrome://extensions` → Enable "Developer mode" → "Load unpacked" → Select `browser-extension` folder
+   - Firefox: `about:debugging` → "Load Temporary Add-on" → Select `browser-extension/manifest.json`
+
+2. **Configure your reader URL:**
+   - Click extension icon → Settings → Enter your reader URL (defaults to production instance)
+
+3. **Add feeds:**
+   - Visit any website with RSS feeds
+   - Click extension icon to see detected feeds
+   - Click "+ Add" next to any feed or paste a custom URL
+   - Your reader opens with the feed pre-filled
+
+See `browser-extension/README.md` for detailed documentation.
+
 ### API Endpoints
+
+- `GET /add` - Deep-link endpoint for adding feeds from external sites
 - `POST /api/feeds` - Add feed
 - `GET /api/feeds` - List feeds
 - `DELETE /api/feeds/:id` - Remove feed
