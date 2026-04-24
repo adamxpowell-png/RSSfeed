@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Add to RSS Reader</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Add to RSS Reader</h1>
+
+    <div id="settings" class="settings-section" style="display: none;">
+      <h3>Settings</h3>
+      <div class="form-group">
+        <label for="readerUrl">RSS Reader URL</label>
+        <input type="url" id="readerUrl" placeholder="https://rssfeed-production-8f03.up.railway.app">
+        <button id="saveSettings">Save Settings</button>
+        <button id="backButton" class="secondary-btn">← Back</button>
+      </div>
+    </div>
+
+    <div id="main" class="main-section">
+      <div id="detectedFeeds" class="detected-feeds-section" style="display: none;">
+        <h3>Feeds detected on this page</h3>
+        <div id="feedsList"></div>
+      </div>
+
+      <div class="form-group">
+        <label for="customUrl">Add a custom feed URL</label>
+        <input type="url" id="customUrl" placeholder="https://example.com/feed.xml">
+        <button id="addButton">Add Feed</button>
+      </div>
+
+      <div id="status" class="status-message" style="display: none;"></div>
+
+      <button id="settingsButton" class="secondary-btn settings-toggle">⚙️ Settings</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
