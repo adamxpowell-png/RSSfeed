@@ -475,10 +475,40 @@
         categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
     }
 
+    function handleDeepLink() {
+      const params = new URLSearchParams(window.location.search);
+      const feedUrl = params.get('url');
+      const feedTitle = params.get('title');
+
+      if (feedUrl) {
+        // Pre-fill the feed URL
+        document.getElementById('feedUrl').value = feedUrl;
+
+        // Pre-fill title if provided
+        if (feedTitle) {
+          document.getElementById('feedTitle').value = feedTitle;
+        }
+
+        // Auto-open the modal
+        openAddFeedModal();
+
+        // Auto-focus on title field for user input
+        setTimeout(() => {
+          document.getElementById('feedTitle').focus();
+        }, 100);
+
+        // Clean up the URL to remove query params for cleaner history
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+
     // Load on page load
     loadFeeds();
     loadArticles();
     loadCategories();
+
+    // Handle deep-link parameters if present
+    handleDeepLink();
 
     // Refresh every 5 minutes
     setInterval(() => {

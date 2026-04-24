@@ -1,15 +1,39 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { initDatabase, query } from './database.js';
 import { startScheduler, triggerDigestNow } from './scheduler.js';
 import { fetchFeeds, getUnreadArticles } from './feedFetcher.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+
+// Deep-link endpoint for adding feeds from external sites
+app.get('/add', (req, res) => {
+  const feedUrl = req.query.url;
+  const feedTitle = req.query.title || '';
+
+  // Validate URL format (basic check)
+  if (feedUrl) {
+    try {
+      new URL(feedUrl);
+    } catch (err) {
+      return res.status(400).send('Invalid URL format');
+    }
+  }
+
+  // Serve index.html - frontend will detect query params and handle pre-filling
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
 app.use(express.static('public'));
 
 // Initialize
