@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RSS Feed Reader</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f7fa;
+      color: #2c3e50;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    header {
+      background: white;
+      padding: 20px 0;
+      margin-bottom: 30px;
+      border-bottom: 1px solid #ecf0f1;
+    }
+
+    h1 {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+      flex-wrap: wrap;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      gap: 20px;
+    }
+
+    .sidebar {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      height: fit-content;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .sidebar h2 {
+      font-size: 16px;
+      margin-bottom: 15px;
+      color: #34495e;
+    }
+
+    .feed-item {
+      padding: 12px;
+      margin-bottom: 10px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      font-size: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .feed-item .title {
+      flex: 1;
+    }
+
+    .feed-item .remove {
+      background: #e74c3c;
+      color: white;
+      border: none;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .feed-item .remove:hover {
+      background: #c0392b;
+    }
+
+    .content {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .articles {
+      display: grid;
+      gap: 15px;
+    }
+
+    .article {
+      padding: 15px;
+      background: #f8f9fa;
+      border-left: 4px solid #3498db;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+
+    .article.read {
+      opacity: 0.6;
+      background: #ecf0f1;
+    }
+
+    .article:hover {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .article h3 {
+      margin: 0 0 8px 0;
+      font-size: 16px;
+    }
+
+    .article a {
+      color: #3498db;
+      text-decoration: none;
+    }
+
+    .article a:hover {
+      text-decoration: underline;
+    }
+
+    .article-meta {
+      font-size: 12px;
+      color: #7f8c8d;
+      margin: 8px 0;
+    }
+
+    .article-desc {
+      font-size: 13px;
+      color: #555;
+      margin: 10px 0;
+      line-height: 1.4;
+    }
+
+    .article-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      font-size: 12px;
+    }
+
+    .article-actions button {
+      background: #3498db;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .article-actions button:hover {
+      background: #2980b9;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 5px;
+      color: #34495e;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #bdc3c7;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    button {
+      background: #27ae60;
+      color: white;
+      padding: 10px 15px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    button:hover {
+      background: #229954;
+    }
+
+    .secondary-btn {
+      background: #95a5a6;
+    }
+
+    .secondary-btn:hover {
+      background: #7f8c8d;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: #95a5a6;
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .modal.open {
+      display: flex;
+    }
+
+    .modal-content {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      max-width: 400px;
+      width: 90%;
+    }
+
+    .modal-content h2 {
+      margin-bottom: 20px;
+    }
+
+    .close-modal {
+      float: right;
+      cursor: pointer;
+      font-size: 24px;
+      color: #95a5a6;
+    }
+
+    @media (max-width: 768px) {
+      .main {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>RSS Feed Reader</h1>
+      <div class="header-actions">
+        <button onclick="openAddFeedModal()">+ Add Feed</button>
+        <button class="secondary-btn" onclick="fetchFeeds()">Fetch Now</button>
+        <button class="secondary-btn" onclick="triggerDigest()">Send Digest</button>
+        <button class="secondary-btn" onclick="markAllRead()">Mark All Read</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="main">
+      <aside class="sidebar">
+        <h2>Feeds</h2>
+        <div id="feedsList"></div>
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #ecf0f1;">
+        <h2>Manage</h2>
+        <button onclick="openAddCategoryModal()" style="width: 100; margin-bottom: 10px;">+ Add Category</button>
+      </aside>
+
+      <main class="content">
+        <div id="articlesList"></div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Add Feed Modal -->
+  <div id="feedModal" class="modal">
+    <div class="modal-content">
+      <span class="close-modal" onclick="closeFeedModal()">&times;</span>
+      <h2>Add Feed</h2>
+      <div class="form-group">
+        <label>Feed URL</label>
+        <input type="url" id="feedUrl" placeholder="https://example.com/feed">
+      </div>
+      <div class="form-group">
+        <label>Title (optional)</label>
+        <input type="text" id="feedTitle" placeholder="Feed title">
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <select id="feedCategory">
+          <option value="">-- Select Category --</option>
+        </select>
+      </div>
+      <button onclick="addFeed()" style="width: 100%;">Add Feed</button>
+    </div>
+  </div>
+
+  <!-- Add Category Modal -->
+  <div id="categoryModal" class="modal">
+    <div class="modal-content">
+      <span class="close-modal" onclick="closeCategoryModal()">&times;</span>
+      <h2>Add Category</h2>
+      <div class="form-group">
+        <label>Category Name</label>
+        <input type="text" id="categoryName" placeholder="e.g., Tech, News, etc.">
+      </div>
+      <button onclick="addCategory()" style="width: 100%;">Add Category</button>
+    </div>
+  </div>
+
+  <script>
+    let feeds = [];
+    let articles = [];
+    let categories = [];
+
+    async function loadFeeds() {
+      const res = await fetch('/api/feeds');
+      feeds = await res.json();
+      renderFeeds();
+    }
+
+    async function loadArticles() {
+      const res = await fetch('/api/articles');
+      articles = await res.json();
+      renderArticles();
+    }
+
+    async function loadCategories() {
+      const res = await fetch('/api/categories');
+      categories = await res.json();
+      updateCategorySelect();
+    }
+
+    function renderFeeds() {
+      const list = document.getElementById('feedsList');
+      if (feeds.length === 0) {
+        list.innerHTML = '<div class="empty">No feeds yet</div>';
+        return;
+      }
+      list.innerHTML = feeds.map(f => `
+        <div class="feed-item">
+          <div class="title">${f.title || f.url}<br><small style="color: #95a5a6;">${f.category || 'Uncategorized'}</small></div>
+          <button class="remove" onclick="removeFeed(${f.id})">Remove</button>
+        </div>
+      `).join('');
+    }
+
+    function renderArticles() {
+      const list = document.getElementById('articlesList');
+      if (articles.length === 0) {
+        list.innerHTML = '<div class="empty">No articles yet. Add feeds and fetch to get started.</div>';
+        return;
+      }
+      list.innerHTML = articles.map(a => `
+        <article class="article ${a.read ? 'read' : ''}">
+          <h3><a href="${a.url}" target="_blank">${a.title}</a></h3>
+          <div class="article-meta">
+            <strong>${a.feed_title}</strong> ${a.category ? `• ${a.category}` : ''}
+            <br>
+            ${new Date(a.published_at).toLocaleDateString()} ${new Date(a.published_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}
+          </div>
+          <div class="article-desc">${a.description?.substring(0, 200) || 'No description'}...</div>
+          <div class="article-actions">
+            <a href="${a.url}" target="_blank">Read →</a>
+            ${!a.read ? `<button onclick="markArticleRead(${a.id})">Mark Read</button>` : '<span style="color: #95a5a6;">Read</span>'}
+          </div>
+        </article>
+      `).join('');
+    }
+
+    async function addFeed() {
+      const url = document.getElementById('feedUrl').value;
+      const title = document.getElementById('feedTitle').value;
+      const categoryId = document.getElementById('feedCategory').value || null;
+
+      if (!url) {
+        alert('Please enter a feed URL');
+        return;
+      }
+
+      await fetch('/api/feeds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, title, categoryId })
+      });
+
+      closeFeedModal();
+      loadFeeds();
+    }
+
+    async function removeFeed(id) {
+      if (!confirm('Remove this feed?')) return;
+      await fetch(`/api/feeds/${id}`, { method: 'DELETE' });
+      loadFeeds();
+      loadArticles();
+    }
+
+    async function addCategory() {
+      const name = document.getElementById('categoryName').value;
+      if (!name) {
+        alert('Please enter a category name');
+        return;
+      }
+
+      await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+
+      closeCategoryModal();
+      loadCategories();
+    }
+
+    async function markArticleRead(id) {
+      await fetch(`/api/articles/${id}/read`, { method: 'PATCH' });
+      loadArticles();
+    }
+
+    async function markAllRead() {
+      if (!confirm('Mark all articles as read?')) return;
+      await fetch('/api/articles/mark-all-read', { method: 'PATCH' });
+      loadArticles();
+    }
+
+    async function fetchFeeds() {
+      await fetch('/api/fetch-feeds', { method: 'POST' });
+      loadArticles();
+    }
+
+    async function triggerDigest() {
+      const res = await fetch('/api/trigger-digest', { method: 'POST' });
+      const data = await res.json();
+      alert(data.success ? `Digest sent with ${data.articleCount} articles` : `Error: ${data.error}`);
+    }
+
+    function openAddFeedModal() {
+      document.getElementById('feedModal').classList.add('open');
+    }
+
+    function closeFeedModal() {
+      document.getElementById('feedModal').classList.remove('open');
+      document.getElementById('feedUrl').value = '';
+      document.getElementById('feedTitle').value = '';
+    }
+
+    function openAddCategoryModal() {
+      document.getElementById('categoryModal').classList.add('open');
+    }
+
+    function closeCategoryModal() {
+      document.getElementById('categoryModal').classList.remove('open');
+      document.getElementById('categoryName').value = '';
+    }
+
+    function updateCategorySelect() {
+      const select = document.getElementById('feedCategory');
+      select.innerHTML = '<option value="">-- Select Category --</option>' +
+        categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+    }
+
+    // Load on page load
+    loadFeeds();
+    loadArticles();
+    loadCategories();
+
+    // Refresh every 5 minutes
+    setInterval(() => {
+      loadFeeds();
+      loadArticles();
+    }, 5 * 60 * 1000);
+  </script>
+</body>
+</html>
