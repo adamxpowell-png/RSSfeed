@@ -62,33 +62,79 @@
       color: #34495e;
     }
 
-    .feed-item {
-      padding: 12px;
-      margin-bottom: 10px;
-      background: #f8f9fa;
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      margin-bottom: 2px;
       border-radius: 4px;
       font-size: 14px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .feed-item .title {
-      flex: 1;
-    }
-
-    .feed-item .remove {
-      background: #e74c3c;
-      color: white;
-      border: none;
-      padding: 4px 8px;
-      border-radius: 4px;
       cursor: pointer;
-      font-size: 12px;
     }
 
-    .feed-item .remove:hover {
-      background: #c0392b;
+    .nav-item:hover {
+      background: #f0f3f6;
+    }
+
+    .nav-item.active {
+      background: #3498db;
+      color: white;
+    }
+
+    .nav-item.category {
+      font-weight: 600;
+      margin-top: 10px;
+    }
+
+    .nav-item.feed {
+      padding-left: 22px;
+      font-size: 13px;
+    }
+
+    .nav-item .title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .unread-badge {
+      background: #3498db;
+      color: white;
+      border-radius: 10px;
+      padding: 1px 8px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .nav-item.active .unread-badge {
+      background: white;
+      color: #3498db;
+    }
+
+    .nav-item .remove {
+      background: none;
+      border: none;
+      color: #95a5a6;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 400;
+      padding: 0 4px;
+      visibility: hidden;
+    }
+
+    .nav-item:hover .remove {
+      visibility: visible;
+    }
+
+    .nav-item .remove:hover {
+      background: none;
+      color: #e74c3c;
+    }
+
+    .nav-item.active .remove {
+      color: white;
     }
 
     .content {
@@ -335,10 +381,21 @@
       renderFeeds();
     }
 
+    let currentFilter = { type: 'all', id: null };
+
     async function loadArticles() {
-      const res = await fetch('/api/articles');
+      let url = '/api/articles';
+      if (currentFilter.type === 'feed') url += `?feedId=${currentFilter.id}`;
+      if (currentFilter.type === 'category') url += `?categoryId=${currentFilter.id}`;
+      const res = await fetch(url);
       articles = await res.json();
       renderArticles();
+    }
+
+    function setFilter(type, id) {
+      currentFilter = { type, id };
+      renderFeeds();
+      loadArticles();
     }
 
     async function loadCategories() {
@@ -347,18 +404,53 @@
       updateCategorySelect();
     }
 
+    function unreadBadge(n) {
+      return n > 0 ? `<span class="unread-badge">${n}</span>` : '';
+    }
+
     function renderFeeds() {
       const list = document.getElementById('feedsList');
+      const totalUnread = feeds.reduce((sum, f) => sum + (f.unread_count || 0), 0);
+
+      let html = `
+        <div class="nav-item ${currentFilter.type === 'all' ? 'active' : ''}" onclick="setFilter('all', null)">
+          <span class="title">All</span>
+          ${unreadBadge(totalUnread)}
+        </div>`;
+
       if (feeds.length === 0) {
-        list.innerHTML = '<div class="empty">No feeds yet</div>';
+        list.innerHTML = html + '<div class="empty">No feeds yet</div>';
         return;
       }
-      list.innerHTML = feeds.map(f => `
-        <div class="feed-item">
-          <div class="title">${f.title || f.url}<br><small style="color: #95a5a6;">${f.category || 'Uncategorized'}</small></div>
-          <button class="remove" onclick="removeFeed(${f.id})">Remove</button>
-        </div>
-      `).join('');
+
+      // Group feeds by category (feeds arrive sorted by category, then title)
+      const groups = [];
+      for (const f of feeds) {
+        let group = groups.find(g => g.id === (f.category_id || null));
+        if (!group) {
+          group = { id: f.category_id || null, name: f.category || 'Uncategorized', feeds: [], unread: 0 };
+          groups.push(group);
+        }
+        group.feeds.push(f);
+        group.unread += f.unread_count || 0;
+      }
+
+      for (const g of groups) {
+        const catActive = currentFilter.type === 'category' && currentFilter.id === g.id;
+        html += `
+          <div class="nav-item category ${catActive ? 'active' : ''}" ${g.id ? `onclick="setFilter('category', ${g.id})"` : ''}>
+            <span class="title">${g.name}</span>
+            ${unreadBadge(g.unread)}
+          </div>`;
+        html += g.feeds.map(f => `
+          <div class="nav-item feed ${currentFilter.type === 'feed' && currentFilter.id === f.id ? 'active' : ''}" onclick="setFilter('feed', ${f.id})">
+            <span class="title" title="${f.title || f.url}">${f.title || f.url}</span>
+            ${unreadBadge(f.unread_count)}
+            <button class="remove" onclick="event.stopPropagation(); removeFeed(${f.id})" title="Remove feed">&times;</button>
+          </div>`).join('');
+      }
+
+      list.innerHTML = html;
     }
 
     function renderArticles() {
@@ -407,6 +499,9 @@
     async function removeFeed(id) {
       if (!confirm('Remove this feed?')) return;
       await fetch(`/api/feeds/${id}`, { method: 'DELETE' });
+      if (currentFilter.type === 'feed' && currentFilter.id === id) {
+        currentFilter = { type: 'all', id: null };
+      }
       loadFeeds();
       loadArticles();
     }
@@ -431,17 +526,20 @@
     async function markArticleRead(id) {
       await fetch(`/api/articles/${id}/read`, { method: 'PATCH' });
       loadArticles();
+      loadFeeds();
     }
 
     async function markAllRead() {
       if (!confirm('Mark all articles as read?')) return;
       await fetch('/api/articles/mark-all-read', { method: 'PATCH' });
       loadArticles();
+      loadFeeds();
     }
 
     async function fetchFeeds() {
       await fetch('/api/fetch-feeds', { method: 'POST' });
       loadArticles();
+      loadFeeds();
     }
 
     async function triggerDigest() {

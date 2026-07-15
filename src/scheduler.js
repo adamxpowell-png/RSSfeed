@@ -3,7 +3,26 @@ import { fetchFeeds } from './feedFetcher.js';
 import { sendDailyDigest } from './emailService.js';
 import { getUnreadArticles, markArticlesAsRead } from './feedFetcher.js';
 
+let fetchRunning = false;
+
 export function startScheduler() {
+  // Fetch feeds every 30 minutes (direct function call — works behind auth)
+  schedule.scheduleJob('*/30 * * * *', async () => {
+    if (fetchRunning) {
+      console.log('Feed fetch already running, skipping this run');
+      return;
+    }
+    fetchRunning = true;
+    console.log('Running scheduled feed fetch...');
+    try {
+      await fetchFeeds();
+    } catch (err) {
+      console.error('Scheduled fetch error:', err);
+    } finally {
+      fetchRunning = false;
+    }
+  });
+
   // Run every day at 8 AM
   schedule.scheduleJob('0 8 * * *', async () => {
     console.log('Running scheduled daily digest job...');
@@ -17,7 +36,7 @@ export function startScheduler() {
     }
   });
 
-  console.log('Scheduler started - digest scheduled for 8 AM daily');
+  console.log('Scheduler started - feed fetch every 30 min, digest at 8 AM daily');
 }
 
 // Manual trigger for testing

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { initDatabase, query } from './database.js';
 import { startScheduler, triggerDigestNow } from './scheduler.js';
 import { fetchFeeds, getUnreadArticles } from './feedFetcher.js';
+import { basicAuth } from './auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +16,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+app.use(basicAuth);
 
 // Deep-link endpoint for adding feeds from external sites
 app.get('/add', (req, res) => {
@@ -76,7 +78,8 @@ app.post('/api/feeds', async (req, res) => {
 
 app.get('/api/feeds', async (req, res) => {
   const result = await query(`
-    SELECT f.*, c.name as category
+    SELECT f.*, c.name as category,
+      (SELECT COUNT(*)::int FROM articles a WHERE a.feed_id = f.id AND a.read = FALSE) AS unread_count
     FROM feeds f
     LEFT JOIN categories c ON f.category_id = c.id
     ORDER BY c.name, f.title
@@ -91,6 +94,18 @@ app.delete('/api/feeds/:id', async (req, res) => {
 
 // Articles
 app.get('/api/articles', async (req, res) => {
+  const { feedId, categoryId } = req.query;
+  const conditions = [];
+  const params = [];
+  if (feedId) {
+    params.push(feedId);
+    conditions.push(`f.id = $${params.length}`);
+  }
+  if (categoryId) {
+    params.push(categoryId);
+    conditions.push(`f.category_id = $${params.length}`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const result = await query(`
     SELECT
       a.id, a.title, a.url, a.description, a.published_at, a.read,
@@ -99,9 +114,10 @@ app.get('/api/articles', async (req, res) => {
     FROM articles a
     JOIN feeds f ON a.feed_id = f.id
     LEFT JOIN categories c ON f.category_id = c.id
-    ORDER BY c.name, a.published_at DESC
+    ${where}
+    ORDER BY a.published_at DESC
     LIMIT 200
-  `);
+  `, params);
   res.json(result.rows);
 });
 
