@@ -15,8 +15,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
 app.use(basicAuth);
+app.use(express.json());
 
 // Deep-link endpoint for adding feeds from external sites
 app.get('/add', (req, res) => {
@@ -93,19 +93,37 @@ app.delete('/api/feeds/:id', async (req, res) => {
 });
 
 // Articles
-app.get('/api/articles', async (req, res) => {
-  const { feedId, categoryId } = req.query;
+// Builds SQL conditions from feedId/categoryId query params ("none" = no category).
+// Returns null if a param is present but not numeric, so handlers can 400 instead
+// of passing garbage to pg (an unhandled query rejection would kill the process).
+function articleFilter(queryParams) {
+  const { feedId, categoryId } = queryParams;
   const conditions = [];
   const params = [];
-  if (feedId) {
+  if (feedId !== undefined) {
+    if (!/^\d+$/.test(feedId)) return null;
     params.push(feedId);
     conditions.push(`f.id = $${params.length}`);
   }
-  if (categoryId) {
-    params.push(categoryId);
-    conditions.push(`f.category_id = $${params.length}`);
+  if (categoryId !== undefined) {
+    if (categoryId === 'none') {
+      conditions.push('f.category_id IS NULL');
+    } else if (/^\d+$/.test(categoryId)) {
+      params.push(categoryId);
+      conditions.push(`f.category_id = $${params.length}`);
+    } else {
+      return null;
+    }
   }
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  return { conditions, params };
+}
+
+app.get('/api/articles', async (req, res) => {
+  const filter = articleFilter(req.query);
+  if (!filter) {
+    return res.status(400).json({ error: 'feedId and categoryId must be numeric' });
+  }
+  const where = filter.conditions.length ? `WHERE ${filter.conditions.join(' AND ')}` : '';
   const result = await query(`
     SELECT
       a.id, a.title, a.url, a.description, a.published_at, a.read,
@@ -117,7 +135,7 @@ app.get('/api/articles', async (req, res) => {
     ${where}
     ORDER BY a.published_at DESC
     LIMIT 200
-  `, params);
+  `, filter.params);
   res.json(result.rows);
 });
 
@@ -127,7 +145,16 @@ app.patch('/api/articles/:id/read', async (req, res) => {
 });
 
 app.patch('/api/articles/mark-all-read', async (req, res) => {
-  await query('UPDATE articles SET read = TRUE WHERE read = FALSE');
+  const filter = articleFilter(req.query);
+  if (!filter) {
+    return res.status(400).json({ error: 'feedId and categoryId must be numeric' });
+  }
+  const scope = filter.conditions.length ? `AND ${filter.conditions.join(' AND ')}` : '';
+  await query(`
+    UPDATE articles a SET read = TRUE
+    FROM feeds f
+    WHERE a.feed_id = f.id AND a.read = FALSE ${scope}
+  `, filter.params);
   res.json({ success: true });
 });
 

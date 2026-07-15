@@ -129,12 +129,17 @@
     }
 
     .nav-item .remove:hover {
-      background: none;
       color: #e74c3c;
     }
 
     .nav-item.active .remove {
       color: white;
+    }
+
+    @media (hover: none) {
+      .nav-item .remove {
+        visibility: visible;
+      }
     }
 
     .content {
@@ -375,6 +380,14 @@
     let articles = [];
     let categories = [];
 
+    function esc(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
     async function loadFeeds() {
       const res = await fetch('/api/feeds');
       feeds = await res.json();
@@ -382,14 +395,26 @@
     }
 
     let currentFilter = { type: 'all', id: null };
+    let articlesRequestGen = 0;
+
+    function filterQuery() {
+      if (currentFilter.type === 'feed') return `?feedId=${currentFilter.id}`;
+      if (currentFilter.type === 'category') return `?categoryId=${currentFilter.id ?? 'none'}`;
+      return '';
+    }
 
     async function loadArticles() {
-      let url = '/api/articles';
-      if (currentFilter.type === 'feed') url += `?feedId=${currentFilter.id}`;
-      if (currentFilter.type === 'category') url += `?categoryId=${currentFilter.id}`;
-      const res = await fetch(url);
-      articles = await res.json();
+      const gen = ++articlesRequestGen;
+      const res = await fetch('/api/articles' + filterQuery());
+      const data = await res.json();
+      if (gen !== articlesRequestGen) return; // a newer request superseded this one
+      articles = data;
       renderArticles();
+    }
+
+    function refresh() {
+      loadFeeds();
+      loadArticles();
     }
 
     function setFilter(type, id) {
@@ -419,16 +444,16 @@
         </div>`;
 
       if (feeds.length === 0) {
-        list.innerHTML = html + '<div class="empty">No feeds yet</div>';
-        return;
+        html += '<div class="empty">No feeds yet</div>';
       }
 
       // Group feeds by category (feeds arrive sorted by category, then title)
       const groups = [];
       for (const f of feeds) {
-        let group = groups.find(g => g.id === (f.category_id || null));
-        if (!group) {
-          group = { id: f.category_id || null, name: f.category || 'Uncategorized', feeds: [], unread: 0 };
+        const catId = f.category_id || null;
+        let group = groups[groups.length - 1];
+        if (!group || group.id !== catId) {
+          group = { id: catId, name: f.category || 'Uncategorized', feeds: [], unread: 0 };
           groups.push(group);
         }
         group.feeds.push(f);
@@ -438,13 +463,13 @@
       for (const g of groups) {
         const catActive = currentFilter.type === 'category' && currentFilter.id === g.id;
         html += `
-          <div class="nav-item category ${catActive ? 'active' : ''}" ${g.id ? `onclick="setFilter('category', ${g.id})"` : ''}>
-            <span class="title">${g.name}</span>
+          <div class="nav-item category ${catActive ? 'active' : ''}" onclick="setFilter('category', ${g.id})">
+            <span class="title">${esc(g.name)}</span>
             ${unreadBadge(g.unread)}
           </div>`;
         html += g.feeds.map(f => `
           <div class="nav-item feed ${currentFilter.type === 'feed' && currentFilter.id === f.id ? 'active' : ''}" onclick="setFilter('feed', ${f.id})">
-            <span class="title" title="${f.title || f.url}">${f.title || f.url}</span>
+            <span class="title" title="${esc(f.title || f.url)}">${esc(f.title || f.url)}</span>
             ${unreadBadge(f.unread_count)}
             <button class="remove" onclick="event.stopPropagation(); removeFeed(${f.id})" title="Remove feed">&times;</button>
           </div>`).join('');
@@ -461,15 +486,15 @@
       }
       list.innerHTML = articles.map(a => `
         <article class="article ${a.read ? 'read' : ''}">
-          <h3><a href="${a.url}" target="_blank">${a.title}</a></h3>
+          <h3><a href="${esc(a.url)}" target="_blank">${esc(a.title)}</a></h3>
           <div class="article-meta">
-            <strong>${a.feed_title}</strong> ${a.category ? `• ${a.category}` : ''}
+            <strong>${esc(a.feed_title)}</strong> ${a.category ? `• ${esc(a.category)}` : ''}
             <br>
             ${new Date(a.published_at).toLocaleDateString()} ${new Date(a.published_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}
           </div>
-          <div class="article-desc">${a.description?.substring(0, 200) || 'No description'}...</div>
+          <div class="article-desc">${esc(a.description?.substring(0, 200) || 'No description')}...</div>
           <div class="article-actions">
-            <a href="${a.url}" target="_blank">Read →</a>
+            <a href="${esc(a.url)}" target="_blank">Read →</a>
             ${!a.read ? `<button onclick="markArticleRead(${a.id})">Mark Read</button>` : '<span style="color: #95a5a6;">Read</span>'}
           </div>
         </article>
@@ -499,11 +524,13 @@
     async function removeFeed(id) {
       if (!confirm('Remove this feed?')) return;
       await fetch(`/api/feeds/${id}`, { method: 'DELETE' });
-      if (currentFilter.type === 'feed' && currentFilter.id === id) {
+      const feedMatch = currentFilter.type === 'feed' && currentFilter.id === id;
+      const categoryEmptied = currentFilter.type === 'category' &&
+        !feeds.some(f => f.id !== id && (f.category_id || null) === currentFilter.id);
+      if (feedMatch || categoryEmptied) {
         currentFilter = { type: 'all', id: null };
       }
-      loadFeeds();
-      loadArticles();
+      refresh();
     }
 
     async function addCategory() {
@@ -525,21 +552,19 @@
 
     async function markArticleRead(id) {
       await fetch(`/api/articles/${id}/read`, { method: 'PATCH' });
-      loadArticles();
-      loadFeeds();
+      refresh();
     }
 
     async function markAllRead() {
-      if (!confirm('Mark all articles as read?')) return;
-      await fetch('/api/articles/mark-all-read', { method: 'PATCH' });
-      loadArticles();
-      loadFeeds();
+      const scope = currentFilter.type === 'all' ? 'all articles' : 'all articles in this view';
+      if (!confirm(`Mark ${scope} as read?`)) return;
+      await fetch('/api/articles/mark-all-read' + filterQuery(), { method: 'PATCH' });
+      refresh();
     }
 
     async function fetchFeeds() {
       await fetch('/api/fetch-feeds', { method: 'POST' });
-      loadArticles();
-      loadFeeds();
+      refresh();
     }
 
     async function triggerDigest() {
@@ -601,18 +626,14 @@
     }
 
     // Load on page load
-    loadFeeds();
-    loadArticles();
+    refresh();
     loadCategories();
 
     // Handle deep-link parameters if present
     handleDeepLink();
 
     // Refresh every 5 minutes
-    setInterval(() => {
-      loadFeeds();
-      loadArticles();
-    }, 5 * 60 * 1000);
+    setInterval(refresh, 5 * 60 * 1000);
   </script>
 </body>
 </html>

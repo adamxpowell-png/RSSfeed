@@ -3,7 +3,24 @@ import { query } from './database.js';
 
 const parser = new Parser();
 
+// Single guard shared by every caller (both cron jobs and both manual endpoints),
+// so overlapping runs — e.g. the 30-min fetch and the 8 AM digest — never race.
+let fetchInProgress = false;
+
 export async function fetchFeeds() {
+  if (fetchInProgress) {
+    console.log('Feed fetch already in progress, skipping');
+    return;
+  }
+  fetchInProgress = true;
+  try {
+    await doFetchFeeds();
+  } finally {
+    fetchInProgress = false;
+  }
+}
+
+async function doFetchFeeds() {
   const result = await query('SELECT id, url, title FROM feeds');
   const feeds = result.rows;
 
@@ -51,6 +68,9 @@ export async function getUnreadArticles() {
   return result.rows;
 }
 
-export async function markArticlesAsRead() {
-  await query('UPDATE articles SET read = TRUE WHERE read = FALSE');
+// Marks only the given articles read, so articles fetched while a digest is
+// being sent stay unread for the next digest instead of being silently skipped.
+export async function markArticlesAsRead(articleIds) {
+  if (!articleIds.length) return;
+  await query('UPDATE articles SET read = TRUE WHERE id = ANY($1)', [articleIds]);
 }
