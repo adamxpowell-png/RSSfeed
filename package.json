@@ -6,7 +6,10 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "seed": "node scripts/seed-feeds.js",
+    "test": "node --test \"src/**/*.test.js\"",
+    "dedupe:collapse": "node scripts/collapse-duplicates.js"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

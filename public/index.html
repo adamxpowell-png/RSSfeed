@@ -313,6 +313,18 @@
         grid-template-columns: 1fr;
       }
     }
+
+    .dupe-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 10px;
+      background: #eef2f7;
+      color: #4a5568;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: help;
+    }
   </style>
 </head>
 <body>
@@ -566,7 +578,7 @@
         <article class="article ${a.read ? 'read' : ''}">
           <h3><a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a></h3>
           <div class="article-meta">
-            <strong>${esc(a.feed_title)}</strong> ${a.category ? `• ${esc(a.category)}` : ''}
+            <strong>${esc(a.feed_title)}</strong> ${a.category ? `• ${esc(a.category)}` : ''}${a.hit_count > 1 ? ` <span class="dupe-badge" title="${esc(a.seen_in || '')}">seen in ${a.hit_count} feeds</span>` : ''}
             <br>
             ${new Date(a.published_at).toLocaleDateString()} ${new Date(a.published_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}
           </div>

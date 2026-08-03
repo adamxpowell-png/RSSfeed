@@ -9,7 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDatabase, query } from './database.js';
 import { startScheduler, triggerDigestNow } from './scheduler.js';
-import { fetchFeeds, getUnreadArticles } from './feedFetcher.js';
+import { fetchFeeds, getUnreadArticles, backfillDedupeKeys } from './feedFetcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -168,6 +168,7 @@ app.use(express.static('public'));
 (async () => {
   try {
     await initDatabase();
+    await backfillDedupeKeys();
     startScheduler();
   } catch (err) {
     console.error('Startup error - database unavailable:', err.message);
@@ -281,7 +282,12 @@ app.get('/api/articles', async (req, res) => {
       SELECT
         a.id, a.title, a.url, a.description, a.published_at, a.read,
         f.id as feed_id, f.title as feed_title,
-        c.name as category
+        c.name as category,
+        (SELECT COUNT(*)::int FROM article_feed_hits h WHERE h.article_id = a.id) AS hit_count,
+        (SELECT string_agg(f2.title, ', ' ORDER BY f2.title)
+           FROM article_feed_hits h
+           JOIN feeds f2 ON f2.id = h.feed_id
+          WHERE h.article_id = a.id) AS seen_in
       FROM articles a
       JOIN feeds f ON a.feed_id = f.id
       LEFT JOIN categories c ON f.category_id = c.id
@@ -335,8 +341,8 @@ app.post('/api/trigger-digest', expensiveLimiter, async (req, res) => {
 // Fetch feeds manually
 app.post('/api/fetch-feeds', expensiveLimiter, async (req, res) => {
   try {
-    await fetchFeeds();
-    res.json({ success: true });
+    const stats = await fetchFeeds();
+    res.json({ success: true, ...(stats || {}) });
   } catch (err) {
     console.error('Fetch feeds error:', err);
     res.status(500).json({ error: 'Feed fetch failed - check server logs' });
