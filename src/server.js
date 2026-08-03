@@ -19,13 +19,28 @@ const PORT = process.env.PORT || 3000;
 
 // READER_PASSWORD accepted as fallback so the existing Railway variable keeps working
 const APP_PASSWORD = process.env.APP_PASSWORD || process.env.READER_PASSWORD || '';
-const SESSION_SECRET = process.env.SESSION_SECRET ||
-  (APP_PASSWORD ? crypto.createHash('sha256').update(APP_PASSWORD).digest('hex') : 'dev-secret');
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
+// SESSION_SECRET must be set independently in production and must NEVER derive
+// from the password. The signed cookie value is a constant ('authenticated'),
+// so a password-derived secret would turn any captured cookie into an offline
+// password-cracking oracle. In production an unset secret is a fatal
+// misconfiguration (fail closed). In development we mint an ephemeral random
+// secret so local runs work without config — cookies simply reset per process.
+const RAW_SESSION_SECRET = process.env.SESSION_SECRET || '';
+const SESSION_SECRET = RAW_SESSION_SECRET ||
+  (IS_PRODUCTION ? '' : crypto.randomBytes(32).toString('hex'));
+
+// Auth is live only when BOTH a password and a signing secret are configured.
+// Otherwise every /api route and the login endpoint fail closed (503) in every
+// environment — there is no unauthenticated mode.
+const AUTH_CONFIGURED = Boolean(APP_PASSWORD) && Boolean(SESSION_SECRET);
+
 if (!APP_PASSWORD) {
-  console.warn('WARNING: APP_PASSWORD is not set - ' +
-    (IS_PRODUCTION ? 'API will return 503 until it is configured' : 'running WITHOUT authentication (dev only)'));
+  console.warn('WARNING: APP_PASSWORD is not set - authentication is not configured; the API will return 503 until it is set.');
+}
+if (IS_PRODUCTION && !RAW_SESSION_SECRET) {
+  console.warn('WARNING: SESSION_SECRET is not set - authentication is not configured; the API will return 503. Set a long random SESSION_SECRET in the environment.');
 }
 
 // Railway runs behind a proxy; needed for correct client IPs in rate limiting
@@ -61,26 +76,21 @@ function timingSafeMatch(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
-// Fail-closed in production: no password configured means no API access
+// Fail closed in every environment: without a configured password AND secret,
+// there is no API access.
 function requireAuth(req, res, next) {
-  if (!APP_PASSWORD) {
-    if (IS_PRODUCTION) {
-      return res.status(503).json({ error: 'Service unavailable: APP_PASSWORD is not configured' });
-    }
-    return next(); // dev only
+  if (!AUTH_CONFIGURED) {
+    return res.status(503).json({ error: 'Service unavailable: authentication is not configured' });
   }
   if (req.signedCookies && req.signedCookies.auth === 'authenticated') return next();
   return res.status(401).json({ error: 'Authentication required' });
 }
 
 app.post('/api/login', loginLimiter, (req, res) => {
-  const { password } = req.body || {};
-  if (!APP_PASSWORD) {
-    if (IS_PRODUCTION) {
-      return res.status(503).json({ error: 'Service unavailable: APP_PASSWORD is not configured' });
-    }
-    return res.json({ success: true });
+  if (!AUTH_CONFIGURED) {
+    return res.status(503).json({ error: 'Service unavailable: authentication is not configured' });
   }
+  const { password } = req.body || {};
   if (typeof password !== 'string' || !timingSafeMatch(password, APP_PASSWORD)) {
     return res.status(401).json({ error: 'Incorrect password' });
   }
@@ -99,7 +109,7 @@ app.get('/api/config', (req, res) => {
   res.json({
     appName: process.env.APP_NAME || 'RSS Feed Reader',
     accentColor: process.env.APP_COLOR || '#3498db',
-    authRequired: Boolean(APP_PASSWORD),
+    authRequired: AUTH_CONFIGURED,
   });
 });
 
