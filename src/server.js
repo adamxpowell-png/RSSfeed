@@ -1,12 +1,15 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import cookieParser from 'cookie-parser';
+import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDatabase, query } from './database.js';
 import { startScheduler, triggerDigestNow } from './scheduler.js';
 import { fetchFeeds, getUnreadArticles } from './feedFetcher.js';
-import { basicAuth } from './auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,25 +17,148 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// READER_PASSWORD accepted as fallback so the existing Railway variable keeps working
+const APP_PASSWORD = process.env.APP_PASSWORD || process.env.READER_PASSWORD || '';
+const SESSION_SECRET = process.env.SESSION_SECRET ||
+  (APP_PASSWORD ? crypto.createHash('sha256').update(APP_PASSWORD).digest('hex') : 'dev-secret');
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+if (!APP_PASSWORD) {
+  console.warn('WARNING: APP_PASSWORD is not set - ' +
+    (IS_PRODUCTION ? 'API will return 503 until it is configured' : 'running WITHOUT authentication (dev only)'));
+}
+
+// Railway runs behind a proxy; needed for correct client IPs in rate limiting
+app.set('trust proxy', 1);
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:'],
+      connectSrc: ["'self'"],
+    },
+  },
+}));
 app.use(cors());
-app.use(basicAuth);
-app.use(express.json());
+app.use(express.json({ limit: '10kb' }));
+app.use(cookieParser(SESSION_SECRET));
+
+// Rate limiting
+const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+const expensiveLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false });
+app.use(globalLimiter);
+
+// --- Auth ---
+
+function timingSafeMatch(a, b) {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+// Fail-closed in production: no password configured means no API access
+function requireAuth(req, res, next) {
+  if (!APP_PASSWORD) {
+    if (IS_PRODUCTION) {
+      return res.status(503).json({ error: 'Service unavailable: APP_PASSWORD is not configured' });
+    }
+    return next(); // dev only
+  }
+  if (req.signedCookies && req.signedCookies.auth === 'authenticated') return next();
+  return res.status(401).json({ error: 'Authentication required' });
+}
+
+app.post('/api/login', loginLimiter, (req, res) => {
+  const { password } = req.body || {};
+  if (!APP_PASSWORD) {
+    if (IS_PRODUCTION) {
+      return res.status(503).json({ error: 'Service unavailable: APP_PASSWORD is not configured' });
+    }
+    return res.json({ success: true });
+  }
+  if (typeof password !== 'string' || !timingSafeMatch(password, APP_PASSWORD)) {
+    return res.status(401).json({ error: 'Incorrect password' });
+  }
+  res.cookie('auth', 'authenticated', {
+    signed: true,
+    httpOnly: true,
+    secure: IS_PRODUCTION,
+    sameSite: 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+  });
+  res.json({ success: true });
+});
+
+// Public: instance branding for the frontend
+app.get('/api/config', (req, res) => {
+  res.json({
+    appName: process.env.APP_NAME || 'RSS Feed Reader',
+    accentColor: process.env.APP_COLOR || '#3498db',
+    authRequired: Boolean(APP_PASSWORD),
+  });
+});
+
+// All other /api routes require auth
+app.use('/api', requireAuth);
+
+// --- Validation helpers ---
+
+const PRIVATE_HOST_PATTERNS = [
+  /^localhost$/i,
+  /^127\./,
+  /^10\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^\[?::1\]?$/,
+  /^0\.0\.0\.0$/,
+  /\.internal$/i,
+  /\.local$/i,
+];
+
+// Blocks non-http(s) protocols and obvious private/internal hosts.
+// Full DNS-rebinding protection is out of scope; the API requires auth.
+function validateFeedUrl(rawUrl) {
+  if (typeof rawUrl !== 'string' || rawUrl.length === 0 || rawUrl.length > 1024) {
+    return { valid: false, reason: 'URL must be between 1 and 1024 characters' };
+  }
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { valid: false, reason: 'Invalid URL format' };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { valid: false, reason: 'Only http and https URLs are allowed' };
+  }
+  if (PRIVATE_HOST_PATTERNS.some((p) => p.test(parsed.hostname))) {
+    return { valid: false, reason: 'URL host is not allowed' };
+  }
+  return { valid: true };
+}
+
+function handleDbError(res, err, uniqueMessage) {
+  if (err.code === '23505' && uniqueMessage) {
+    return res.status(400).json({ error: uniqueMessage });
+  }
+  console.error('Database error:', err);
+  return res.status(500).json({ error: 'Something went wrong' });
+}
 
 // Deep-link endpoint for adding feeds from external sites
 app.get('/add', (req, res) => {
   const feedUrl = req.query.url;
-  const feedTitle = req.query.title || '';
-
-  // Validate URL format (basic check)
   if (feedUrl) {
-    try {
-      new URL(feedUrl);
-    } catch (err) {
-      return res.status(400).send('Invalid URL format');
+    const check = validateFeedUrl(feedUrl);
+    if (!check.valid) {
+      return res.status(400).send('Invalid feed URL');
     }
   }
-
-  // Serve index.html - frontend will detect query params and handle pre-filling
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
@@ -40,8 +166,12 @@ app.use(express.static('public'));
 
 // Initialize
 (async () => {
-  await initDatabase();
-  startScheduler();
+  try {
+    await initDatabase();
+    startScheduler();
+  } catch (err) {
+    console.error('Startup error - database unavailable:', err.message);
+  }
 })();
 
 // API Routes
@@ -49,22 +179,36 @@ app.use(express.static('public'));
 // Categories
 app.post('/api/categories', async (req, res) => {
   const { name } = req.body;
+  if (typeof name !== 'string' || name.trim().length === 0 || name.length > 255) {
+    return res.status(400).json({ error: 'Category name must be between 1 and 255 characters' });
+  }
   try {
-    const result = await query('INSERT INTO categories (name) VALUES ($1) RETURNING *', [name]);
+    const result = await query('INSERT INTO categories (name) VALUES ($1) RETURNING *', [name.trim()]);
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleDbError(res, err, 'Category already exists');
   }
 });
 
 app.get('/api/categories', async (req, res) => {
-  const result = await query('SELECT * FROM categories ORDER BY name');
-  res.json(result.rows);
+  try {
+    const result = await query('SELECT * FROM categories ORDER BY name');
+    res.json(result.rows);
+  } catch (err) {
+    handleDbError(res, err);
+  }
 });
 
 // Feeds
 app.post('/api/feeds', async (req, res) => {
   const { url, title, categoryId } = req.body;
+  const check = validateFeedUrl(url);
+  if (!check.valid) {
+    return res.status(400).json({ error: check.reason });
+  }
+  if (title && (typeof title !== 'string' || title.length > 255)) {
+    return res.status(400).json({ error: 'Title must be 255 characters or fewer' });
+  }
   try {
     const result = await query(
       'INSERT INTO feeds (url, title, category_id) VALUES ($1, $2, $3) RETURNING *',
@@ -72,24 +216,32 @@ app.post('/api/feeds', async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    handleDbError(res, err, 'Feed already exists');
   }
 });
 
 app.get('/api/feeds', async (req, res) => {
-  const result = await query(`
-    SELECT f.*, c.name as category,
-      (SELECT COUNT(*)::int FROM articles a WHERE a.feed_id = f.id AND a.read = FALSE) AS unread_count
-    FROM feeds f
-    LEFT JOIN categories c ON f.category_id = c.id
-    ORDER BY c.name, f.title
-  `);
-  res.json(result.rows);
+  try {
+    const result = await query(`
+      SELECT f.*, c.name as category,
+        (SELECT COUNT(*)::int FROM articles a WHERE a.feed_id = f.id AND a.read = FALSE) AS unread_count
+      FROM feeds f
+      LEFT JOIN categories c ON f.category_id = c.id
+      ORDER BY c.name, f.title
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    handleDbError(res, err);
+  }
 });
 
 app.delete('/api/feeds/:id', async (req, res) => {
-  await query('DELETE FROM feeds WHERE id = $1', [req.params.id]);
-  res.json({ success: true });
+  try {
+    await query('DELETE FROM feeds WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    handleDbError(res, err);
+  }
 });
 
 // Articles
@@ -124,24 +276,23 @@ app.get('/api/articles', async (req, res) => {
     return res.status(400).json({ error: 'feedId and categoryId must be numeric' });
   }
   const where = filter.conditions.length ? `WHERE ${filter.conditions.join(' AND ')}` : '';
-  const result = await query(`
-    SELECT
-      a.id, a.title, a.url, a.description, a.published_at, a.read,
-      f.id as feed_id, f.title as feed_title,
-      c.name as category
-    FROM articles a
-    JOIN feeds f ON a.feed_id = f.id
-    LEFT JOIN categories c ON f.category_id = c.id
-    ${where}
-    ORDER BY a.published_at DESC
-    LIMIT 200
-  `, filter.params);
-  res.json(result.rows);
-});
-
-app.patch('/api/articles/:id/read', async (req, res) => {
-  await query('UPDATE articles SET read = TRUE WHERE id = $1', [req.params.id]);
-  res.json({ success: true });
+  try {
+    const result = await query(`
+      SELECT
+        a.id, a.title, a.url, a.description, a.published_at, a.read,
+        f.id as feed_id, f.title as feed_title,
+        c.name as category
+      FROM articles a
+      JOIN feeds f ON a.feed_id = f.id
+      LEFT JOIN categories c ON f.category_id = c.id
+      ${where}
+      ORDER BY a.published_at DESC
+      LIMIT 200
+    `, filter.params);
+    res.json(result.rows);
+  } catch (err) {
+    handleDbError(res, err);
+  }
 });
 
 app.patch('/api/articles/mark-all-read', async (req, res) => {
@@ -150,27 +301,45 @@ app.patch('/api/articles/mark-all-read', async (req, res) => {
     return res.status(400).json({ error: 'feedId and categoryId must be numeric' });
   }
   const scope = filter.conditions.length ? `AND ${filter.conditions.join(' AND ')}` : '';
-  await query(`
-    UPDATE articles a SET read = TRUE
-    FROM feeds f
-    WHERE a.feed_id = f.id AND a.read = FALSE ${scope}
-  `, filter.params);
-  res.json({ success: true });
+  try {
+    await query(`
+      UPDATE articles a SET read = TRUE
+      FROM feeds f
+      WHERE a.feed_id = f.id AND a.read = FALSE ${scope}
+    `, filter.params);
+    res.json({ success: true });
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
+app.patch('/api/articles/:id/read', async (req, res) => {
+  try {
+    await query('UPDATE articles SET read = TRUE WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    handleDbError(res, err);
+  }
 });
 
 // Manual trigger for digest
-app.post('/api/trigger-digest', async (req, res) => {
+app.post('/api/trigger-digest', expensiveLimiter, async (req, res) => {
   const result = await triggerDigestNow();
+  if (!result.success) {
+    console.error('Digest error:', result.error);
+    return res.status(500).json({ success: false, error: 'Digest failed - check server logs' });
+  }
   res.json(result);
 });
 
 // Fetch feeds manually
-app.post('/api/fetch-feeds', async (req, res) => {
+app.post('/api/fetch-feeds', expensiveLimiter, async (req, res) => {
   try {
     await fetchFeeds();
     res.json({ success: true });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    console.error('Fetch feeds error:', err);
+    res.status(500).json({ error: 'Feed fetch failed - check server logs' });
   }
 });
 

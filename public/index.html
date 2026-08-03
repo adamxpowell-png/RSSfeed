@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RSS Feed Reader</title>
   <style>
+    :root {
+      --accent: #3498db;
+      --accent-dark: #2980b9;
+    }
+
     * {
       margin: 0;
       padding: 0;
@@ -78,7 +83,7 @@
     }
 
     .nav-item.active {
-      background: #3498db;
+      background: var(--accent);
       color: white;
     }
 
@@ -100,7 +105,7 @@
     }
 
     .unread-badge {
-      background: #3498db;
+      background: var(--accent);
       color: white;
       border-radius: 10px;
       padding: 1px 8px;
@@ -110,7 +115,7 @@
 
     .nav-item.active .unread-badge {
       background: white;
-      color: #3498db;
+      color: var(--accent);
     }
 
     .nav-item .remove {
@@ -157,7 +162,7 @@
     .article {
       padding: 15px;
       background: #f8f9fa;
-      border-left: 4px solid #3498db;
+      border-left: 4px solid var(--accent);
       border-radius: 4px;
       transition: all 0.2s;
     }
@@ -177,7 +182,7 @@
     }
 
     .article a {
-      color: #3498db;
+      color: var(--accent);
       text-decoration: none;
     }
 
@@ -206,7 +211,7 @@
     }
 
     .article-actions button {
-      background: #3498db;
+      background: var(--accent);
       color: white;
       border: none;
       padding: 6px 12px;
@@ -215,7 +220,7 @@
     }
 
     .article-actions button:hover {
-      background: #2980b9;
+      background: var(--accent-dark);
     }
 
     .form-group {
@@ -313,7 +318,7 @@
 <body>
   <header>
     <div class="container">
-      <h1>RSS Feed Reader</h1>
+      <h1 id="appTitle">RSS Feed Reader</h1>
       <div class="header-actions">
         <button onclick="openAddFeedModal()">+ Add Feed</button>
         <button class="secondary-btn" onclick="fetchFeeds()">Fetch Now</button>
@@ -375,6 +380,19 @@
     </div>
   </div>
 
+  <!-- Login Modal -->
+  <div id="loginModal" class="modal">
+    <div class="modal-content">
+      <h2 id="loginTitle">Sign In</h2>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="loginPassword" placeholder="Enter password">
+      </div>
+      <div id="loginError" style="color: #e74c3c; font-size: 13px; margin-bottom: 10px; display: none;"></div>
+      <button onclick="submitLogin()" style="width: 100%;">Sign In</button>
+    </div>
+  </div>
+
   <script>
     let feeds = [];
     let articles = [];
@@ -385,11 +403,71 @@
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // Only allow http(s) URLs as link targets (blocks javascript: from malicious feeds)
+    function safeUrl(value) {
+      try {
+        const parsed = new URL(value);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return value;
+      } catch {}
+      return '#';
+    }
+
+    // Fetch wrapper: shows the login modal on 401
+    async function api(url, options) {
+      const res = await fetch(url, options);
+      if (res.status === 401) {
+        openLoginModal();
+        throw new Error('unauthenticated');
+      }
+      return res;
+    }
+
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/config');
+        const config = await res.json();
+        document.title = config.appName;
+        document.getElementById('appTitle').textContent = config.appName;
+        document.getElementById('loginTitle').textContent = 'Sign in to ' + config.appName;
+        document.documentElement.style.setProperty('--accent', config.accentColor);
+      } catch {}
+    }
+
+    function openLoginModal() {
+      const modal = document.getElementById('loginModal');
+      if (!modal.classList.contains('open')) {
+        modal.classList.add('open');
+        document.getElementById('loginPassword').focus();
+      }
+    }
+
+    async function submitLogin() {
+      const password = document.getElementById('loginPassword').value;
+      const errorEl = document.getElementById('loginError');
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+      if (res.ok) {
+        document.getElementById('loginModal').classList.remove('open');
+        document.getElementById('loginPassword').value = '';
+        errorEl.style.display = 'none';
+        refresh();
+        loadCategories();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        errorEl.textContent = data.error || 'Sign in failed';
+        errorEl.style.display = 'block';
+      }
     }
 
     async function loadFeeds() {
-      const res = await fetch('/api/feeds');
+      const res = await api('/api/feeds');
       feeds = await res.json();
       renderFeeds();
     }
@@ -405,7 +483,7 @@
 
     async function loadArticles() {
       const gen = ++articlesRequestGen;
-      const res = await fetch('/api/articles' + filterQuery());
+      const res = await api('/api/articles' + filterQuery());
       const data = await res.json();
       if (gen !== articlesRequestGen) return; // a newer request superseded this one
       articles = data;
@@ -424,7 +502,7 @@
     }
 
     async function loadCategories() {
-      const res = await fetch('/api/categories');
+      const res = await api('/api/categories');
       categories = await res.json();
       updateCategorySelect();
     }
@@ -486,7 +564,7 @@
       }
       list.innerHTML = articles.map(a => `
         <article class="article ${a.read ? 'read' : ''}">
-          <h3><a href="${esc(a.url)}" target="_blank">${esc(a.title)}</a></h3>
+          <h3><a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a></h3>
           <div class="article-meta">
             <strong>${esc(a.feed_title)}</strong> ${a.category ? `• ${esc(a.category)}` : ''}
             <br>
@@ -494,7 +572,7 @@
           </div>
           <div class="article-desc">${esc(a.description?.substring(0, 200) || 'No description')}...</div>
           <div class="article-actions">
-            <a href="${esc(a.url)}" target="_blank">Read →</a>
+            <a href="${esc(safeUrl(a.url))}" target="_blank" rel="noopener noreferrer">Read →</a>
             ${!a.read ? `<button onclick="markArticleRead(${a.id})">Mark Read</button>` : '<span style="color: #95a5a6;">Read</span>'}
           </div>
         </article>
@@ -511,11 +589,17 @@
         return;
       }
 
-      await fetch('/api/feeds', {
+      const res = await api('/api/feeds', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, title, categoryId })
       });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Could not add feed');
+        return;
+      }
 
       closeFeedModal();
       loadFeeds();
@@ -523,7 +607,7 @@
 
     async function removeFeed(id) {
       if (!confirm('Remove this feed?')) return;
-      await fetch(`/api/feeds/${id}`, { method: 'DELETE' });
+      await api(`/api/feeds/${id}`, { method: 'DELETE' });
       const feedMatch = currentFilter.type === 'feed' && currentFilter.id === id;
       const categoryEmptied = currentFilter.type === 'category' &&
         !feeds.some(f => f.id !== id && (f.category_id || null) === currentFilter.id);
@@ -540,35 +624,41 @@
         return;
       }
 
-      await fetch('/api/categories', {
+      const res = await api('/api/categories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name })
       });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Could not add category');
+        return;
+      }
 
       closeCategoryModal();
       loadCategories();
     }
 
     async function markArticleRead(id) {
-      await fetch(`/api/articles/${id}/read`, { method: 'PATCH' });
+      await api(`/api/articles/${id}/read`, { method: 'PATCH' });
       refresh();
     }
 
     async function markAllRead() {
       const scope = currentFilter.type === 'all' ? 'all articles' : 'all articles in this view';
       if (!confirm(`Mark ${scope} as read?`)) return;
-      await fetch('/api/articles/mark-all-read' + filterQuery(), { method: 'PATCH' });
+      await api('/api/articles/mark-all-read' + filterQuery(), { method: 'PATCH' });
       refresh();
     }
 
     async function fetchFeeds() {
-      await fetch('/api/fetch-feeds', { method: 'POST' });
+      await api('/api/fetch-feeds', { method: 'POST' });
       refresh();
     }
 
     async function triggerDigest() {
-      const res = await fetch('/api/trigger-digest', { method: 'POST' });
+      const res = await api('/api/trigger-digest', { method: 'POST' });
       const data = await res.json();
       alert(data.success ? `Digest sent with ${data.articleCount} articles` : `Error: ${data.error}`);
     }
@@ -625,7 +715,13 @@
       }
     }
 
+    // Allow Enter key to submit login
+    document.getElementById('loginPassword').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') submitLogin();
+    });
+
     // Load on page load
+    loadConfig();
     refresh();
     loadCategories();
 

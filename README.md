@@ -30,6 +30,11 @@ A simple, self-hosted RSS feed monitoring tool with daily email digests via Rese
    - `EMAIL_FROM`: Sender email (e.g., noreply@yourdomain.com)
    - `EMAIL_TO`: Your email address for digests
    - `PORT`: Server port (default: 3000)
+   - `APP_PASSWORD`: Access password (required in production - without it the app runs unauthenticated)
+   - `SESSION_SECRET`: Random string used to sign login cookies
+   - `APP_NAME`: Instance name shown in the UI and digest emails (optional)
+   - `APP_COLOR`: Accent colour hex for the UI (optional)
+   - `APP_URL`: Public URL of this instance, used in digest email footer
 
 4. **Run locally:**
    ```bash
@@ -126,6 +131,33 @@ See `browser-extension/README.md` for detailed documentation.
 - `PATCH /api/articles/:id/read` - Mark article read
 - `POST /api/fetch-feeds` - Manually fetch all feeds
 - `POST /api/trigger-digest` - Manually send digest email
+
+## Security
+
+- **Authentication**: Set `APP_PASSWORD` to require sign-in (`READER_PASSWORD` is accepted as a fallback for existing deployments). Login sets a signed, HttpOnly cookie valid for 30 days. In production the API returns 503 if no password is configured (fail-closed); in development it runs open.
+- **Rate limiting**: 300 requests/15 min globally, 10 login attempts/15 min, 5 digest/fetch triggers per hour.
+- **Feed URL validation**: Only http/https feeds are accepted; private and internal hosts (localhost, 10.x, 192.168.x, 169.254.x, etc.) are rejected to prevent SSRF.
+- **XSS protection**: All feed content is HTML-escaped in the web UI and digest emails; only http/https article links are rendered.
+- **Headers**: `helmet` sets standard security headers including a CSP.
+
+## Running Multiple Client Instances
+
+Each client gets a fully isolated instance (own database, password, branding, digest recipient) deployed from this same repo:
+
+1. In Railway, create a **new service** from the same GitHub repo
+2. Add a **new PostgreSQL** service for it
+3. Set environment variables on the new service:
+   - `DATABASE_URL` = `${{Postgres-2.DATABASE_URL}}` (reference the new Postgres service)
+   - `APP_PASSWORD` = unique password for this client
+   - `SESSION_SECRET` = unique random string
+   - `APP_NAME` = client's brand name (shown in UI and digest emails)
+   - `APP_COLOR` = client's accent colour (optional)
+   - `EMAIL_TO` = client's digest recipient
+   - `EMAIL_FROM`, `RESEND_API_KEY` = shared or per-client
+   - `APP_URL` = the new service's public domain
+   - `NODE_ENV` = production
+4. Generate a public domain for the new service
+5. Pushing to `main` deploys **all** instances - one codebase, isolated data
 
 ## Customization
 
