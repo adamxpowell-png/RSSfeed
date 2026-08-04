@@ -1,44 +1,165 @@
 {
-  "_comment": "Keyword monitoring feed register. Queries are written in plain search syntax and turned into feed URLs by scripts/seed-feeds.js. Edit the query here, not the URL. Editions: GB = UK/international edition, NG = Nigerian edition (surfaces local outlets a UK-scoped query silently drops).",
+  "_comment": "Keyword monitoring feed register. Queries are written in plain search syntax and turned into feed URLs by scripts/seed-feeds.js. Edit the query here, not the URL. Editions: GB = UK/international edition, NG = Nigerian edition (surfaces local outlets a UK-scoped query silently drops). LinkedIn coverage is via Google's index of public linkedin.com/posts URLs — Google News RSS honours the site: operator. This is a read of Google's index, not automated access to LinkedIn, so it carries no LinkedIn ToS exposure. Coverage is partial and lagged; the bookmark sweep in docs/ is the complete real-time view.",
   "categories": [
     {
       "name": "NLNG",
       "feeds": [
-        { "title": "NLNG - entity (Nigeria)", "engine": "gnews", "edition": "NG", "q": "\"Nigeria LNG\" OR \"NLNG\" OR \"Nigeria Liquefied Natural Gas\"" },
-        { "title": "NLNG - entity (international)", "engine": "gnews", "edition": "GB", "q": "\"Nigeria LNG\" OR \"NLNG\" OR \"Nigeria Liquefied Natural Gas\"" },
-        { "title": "NLNG - leadership", "engine": "gnews", "edition": "NG", "q": "\"Nigeria LNG\" (Falade OR Mshelbila OR \"managing director\" OR \"chief executive\")" },
-        { "title": "NLNG - Toruku programme", "engine": "gnews", "edition": "NG", "q": "Toruku OR \u00d3r\u00fak\u00fa OR \"NLNG transformation\" OR \"NLNG rebrand\"" },
-        { "title": "NLNG - Train 7 and Bonny", "engine": "gnews", "edition": "NG", "q": "(\"Train 7\" OR \"Bonny Island\") (NLNG OR \"Nigeria LNG\")" },
-        { "title": "NLNG - Nigeria Prize", "engine": "gnews", "edition": "NG", "q": "\"Nigeria Prize for Science\" OR \"Nigeria Prize for Literature\"" },
-        { "title": "NLNG - regulatory context", "engine": "gnews", "edition": "NG", "q": "(NUPRC OR NMDPRA OR \"Petroleum Industry Act\") (LNG OR gas)" },
-        { "title": "NLNG - entity (Bing)", "engine": "bing", "q": "\"Nigeria LNG\" OR \"NLNG\"" }
+        {
+          "title": "NLNG - entity (Nigeria)",
+          "engine": "gnews",
+          "edition": "NG",
+          "q": "\"Nigeria LNG\" OR \"NLNG\" OR \"Nigeria Liquefied Natural Gas\""
+        },
+        {
+          "title": "NLNG - entity (international)",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "\"Nigeria LNG\" OR \"NLNG\" OR \"Nigeria Liquefied Natural Gas\""
+        },
+        {
+          "title": "NLNG - leadership",
+          "engine": "gnews",
+          "edition": "NG",
+          "q": "\"Nigeria LNG\" (Falade OR Mshelbila OR \"managing director\" OR \"chief executive\")"
+        },
+        {
+          "title": "NLNG - Toruku programme",
+          "engine": "gnews",
+          "edition": "NG",
+          "q": "Toruku OR Órúkú OR \"NLNG transformation\" OR \"NLNG rebrand\""
+        },
+        {
+          "title": "NLNG - Train 7 and Bonny",
+          "engine": "gnews",
+          "edition": "NG",
+          "q": "(\"Train 7\" OR \"Bonny Island\") (NLNG OR \"Nigeria LNG\")"
+        },
+        {
+          "title": "NLNG - Nigeria Prize",
+          "engine": "gnews",
+          "edition": "NG",
+          "q": "\"Nigeria Prize for Science\" OR \"Nigeria Prize for Literature\""
+        },
+        {
+          "title": "NLNG - regulatory context",
+          "engine": "gnews",
+          "edition": "NG",
+          "q": "(NUPRC OR NMDPRA OR \"Petroleum Industry Act\") (LNG OR gas)"
+        },
+        {
+          "title": "NLNG - entity (Bing)",
+          "engine": "bing",
+          "q": "\"Nigeria LNG\" OR \"NLNG\""
+        }
       ]
     },
     {
       "name": "CICU",
       "feeds": [
-        { "title": "CICU - entity", "engine": "gnews", "edition": "GB", "q": "\"Center of Islamic Civilisation\" OR \"Centre of Islamic Civilization\" OR \"Center of Islamic Civilization\" OR \"Centre of Islamic Civilisation\"" },
-        { "title": "CICU - Uzbekistan cultural diplomacy", "engine": "gnews", "edition": "GB", "q": "Uzbekistan (UNESCO OR \"cultural diplomacy\" OR \"Islamic civilisation\" OR \"Islamic civilization\")" },
-        { "title": "CICU - Tashkent heritage and exhibitions", "engine": "gnews", "edition": "GB", "q": "Tashkent (museum OR exhibition OR heritage OR manuscript)" },
-        { "title": "CICU - entity (Bing)", "engine": "bing", "q": "\"Center of Islamic Civilisation\" OR \"Centre of Islamic Civilization\" OR \"Center of Islamic Civilization\"" }
+        {
+          "title": "CICU - entity",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "\"Center of Islamic Civilisation\" OR \"Centre of Islamic Civilization\" OR \"Center of Islamic Civilization\" OR \"Centre of Islamic Civilisation\""
+        },
+        {
+          "title": "CICU - Uzbekistan cultural diplomacy",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "Uzbekistan (UNESCO OR \"cultural diplomacy\" OR \"Islamic civilisation\" OR \"Islamic civilization\")"
+        },
+        {
+          "title": "CICU - Tashkent heritage and exhibitions",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "Tashkent (museum OR exhibition OR heritage OR manuscript)"
+        },
+        {
+          "title": "CICU - entity (Bing)",
+          "engine": "bing",
+          "q": "\"Center of Islamic Civilisation\" OR \"Centre of Islamic Civilization\" OR \"Center of Islamic Civilization\""
+        }
       ]
     },
     {
       "name": "UK Talent",
       "feeds": [
-        { "title": "UK Talent - Jo Sellick and Sellick Partnership", "engine": "gnews", "edition": "GB", "q": "\"Jo Sellick\" OR \"Sellick Partnership\"" },
-        { "title": "UK Talent - MJS Partnership", "engine": "gnews", "edition": "GB", "q": "\"MJS Partnership\"" },
-        { "title": "UK Talent - Austin Kemp", "engine": "gnews", "edition": "GB", "q": "\"Austin Kemp\"" },
-        { "title": "UK Talent - Employment Rights Bill", "engine": "gnews", "edition": "GB", "q": "\"Employment Rights Bill\" OR \"Employment Rights Act\"" },
-        { "title": "UK Talent - labour market", "engine": "gnews", "edition": "GB", "q": "(\"labour market\" OR \"job vacancies\" OR \"hiring intentions\") (ONS OR REC OR recruitment)" }
+        {
+          "title": "UK Talent - Jo Sellick and Sellick Partnership",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "\"Jo Sellick\" OR \"Sellick Partnership\""
+        },
+        {
+          "title": "UK Talent - MJS Partnership",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "\"MJS Partnership\""
+        },
+        {
+          "title": "UK Talent - Austin Kemp",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "\"Austin Kemp\""
+        },
+        {
+          "title": "UK Talent - Employment Rights Bill",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "\"Employment Rights Bill\" OR \"Employment Rights Act\""
+        },
+        {
+          "title": "UK Talent - labour market",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "(\"labour market\" OR \"job vacancies\" OR \"hiring intentions\") (ONS OR REC OR recruitment)"
+        }
       ]
     },
     {
       "name": "SYOS Alerts",
       "feeds": [
-        { "title": "SYOS - platforms (consolidated)", "engine": "gnews", "edition": "GB", "q": "SYOS (SA1 OR SA200 OR SA7 OR SM300 OR SM400 OR SM600 OR SM1000 OR SU10 OR AAIMS OR Rattler)" },
-        { "title": "SYOS - entity (consolidated)", "engine": "gnews", "edition": "GB", "q": "\"SYOS Aerospace\" OR \"Syos Aerospace\"" },
-        { "title": "SYOS - Reddit and forums", "engine": "reddit", "q": "\"SYOS Aerospace\"" }
+        {
+          "title": "SYOS - platforms (consolidated)",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "SYOS (SA1 OR SA200 OR SA7 OR SM300 OR SM400 OR SM600 OR SM1000 OR SU10 OR AAIMS OR Rattler)"
+        },
+        {
+          "title": "SYOS - entity (consolidated)",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "\"SYOS Aerospace\" OR \"Syos Aerospace\""
+        },
+        {
+          "title": "SYOS - Reddit and forums",
+          "engine": "reddit",
+          "q": "\"SYOS Aerospace\""
+        },
+        {
+          "title": "SYOS - LinkedIn posts (entity)",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "\"SYOS Aerospace\" site:linkedin.com/posts"
+        },
+        {
+          "title": "SYOS - LinkedIn posts (Sam Vye)",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "(\"Sam Vye\" OR \"Samuel Vye\") site:linkedin.com/posts"
+        },
+        {
+          "title": "SYOS - LinkedIn posts (platforms)",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "SYOS (SM1000 OR SU10 OR SA200 OR SA7 OR SM300 OR SM400 OR SM600 OR Rattler OR AAIMS) site:linkedin.com/posts"
+        },
+        {
+          "title": "SYOS - LinkedIn posts (competitors)",
+          "engine": "gnews",
+          "edition": "GB",
+          "q": "(Kraken OR Tekever OR Anduril OR Helsing) (USV OR UUV OR uncrewed) site:linkedin.com/posts"
+        }
       ]
     }
   ]
