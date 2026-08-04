@@ -396,12 +396,20 @@
   <div id="loginModal" class="modal">
     <div class="modal-content">
       <h2 id="loginTitle">Sign In</h2>
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="loginPassword" placeholder="Enter password">
-      </div>
-      <div id="loginError" style="color: #e74c3c; font-size: 13px; margin-bottom: 10px; display: none;"></div>
-      <button onclick="submitLogin()" style="width: 100%;">Sign In</button>
+      <form id="loginForm" autocomplete="on">
+        <!-- Offscreen stable "account" so password managers (1Password, iCloud
+             Keychain, etc.) reliably save and later offer this credential. The
+             manager keys the entry on origin + this username. -->
+        <input type="text" name="username" id="loginUsername" autocomplete="username"
+               value="rss-reader" readonly tabindex="-1" aria-hidden="true"
+               style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);border:0;">
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" name="password" autocomplete="current-password" placeholder="Enter password">
+        </div>
+        <div id="loginError" style="color: #e74c3c; font-size: 13px; margin-bottom: 10px; display: none;"></div>
+        <button type="submit" style="width: 100%;">Sign In</button>
+      </form>
     </div>
   </div>
 
@@ -457,7 +465,8 @@
       }
     }
 
-    async function submitLogin() {
+    async function submitLogin(e) {
+      if (e) e.preventDefault();
       const password = document.getElementById('loginPassword').value;
       const errorEl = document.getElementById('loginError');
       const res = await fetch('/api/login', {
@@ -466,11 +475,12 @@
         body: JSON.stringify({ password })
       });
       if (res.ok) {
-        document.getElementById('loginModal').classList.remove('open');
-        document.getElementById('loginPassword').value = '';
         errorEl.style.display = 'none';
-        refresh();
-        loadCategories();
+        // Full navigation (as the CSG login does) re-runs the app with the
+        // freshly-set cookie AND is the most reliable trigger for the browser's
+        // "save password?" prompt. The password manager sees the form submit
+        // succeed and offers to store the credential.
+        window.location.reload();
       } else {
         const data = await res.json().catch(() => ({}));
         errorEl.textContent = data.error || 'Sign in failed';
@@ -727,10 +737,8 @@
       }
     }
 
-    // Allow Enter key to submit login
-    document.getElementById('loginPassword').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') submitLogin();
-    });
+    // The login form submit (button click or Enter) drives sign-in.
+    document.getElementById('loginForm').addEventListener('submit', submitLogin);
 
     // Load on page load
     loadConfig();
