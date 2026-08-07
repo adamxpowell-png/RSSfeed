@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RSS Feed Reader</title>
+  <title>CSG RSS Intelligence Feed</title>
+  <link rel="icon" href="/csg-logo.png">
   <style>
     :root {
-      --accent: #3498db;
-      --accent-dark: #2980b9;
+      --accent: #000648;       /* Chapel Street Group navy */
+      --accent-dark: #000430;
+      --brand-serif: Georgia, 'Times New Roman', serif;
     }
 
     * {
@@ -18,8 +20,53 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background: #f5f7fa;
+      background: #F4EFF9;
       color: #2c3e50;
+    }
+
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .brand-logo {
+      height: 34px;
+      width: auto;
+      display: block;
+    }
+    .brand-sub {
+      font-family: var(--brand-serif);
+      font-size: 18px;
+      color: var(--accent);
+      letter-spacing: 0.01em;
+    }
+    /* Client switcher (two-level nav: pick a client, then browse its topics) */
+    .client-switcher {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .client-tab {
+      padding: 5px 11px;
+      border-radius: 999px;
+      font-size: 13px;
+      cursor: pointer;
+      background: #ece7f3;
+      color: var(--accent);
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .client-tab:hover { border-color: var(--accent); }
+    .client-tab.active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .client-tab .count {
+      font-size: 11px;
+      opacity: 0.8;
+      margin-left: 4px;
     }
 
     .container {
@@ -66,6 +113,23 @@
       margin-bottom: 15px;
       color: #34495e;
     }
+
+    .sidebar h2, .modal-content h2 { font-family: var(--brand-serif); }
+
+    /* Client group header in the two-level sidebar */
+    .client-group {
+      font-family: var(--brand-serif);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin: 14px 0 4px;
+      padding: 0 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .client-group:first-of-type { margin-top: 4px; }
 
     .nav-item {
       display: flex;
@@ -244,7 +308,7 @@
     }
 
     button {
-      background: #27ae60;
+      background: var(--accent);
       color: white;
       padding: 10px 15px;
       border: none;
@@ -330,12 +394,16 @@
 <body>
   <header>
     <div class="container">
-      <h1 id="appTitle">RSS Feed Reader</h1>
+      <div class="brand">
+        <img src="/csg-logo.png" alt="Chapel Street Group" class="brand-logo">
+        <span class="brand-sub" id="appTitle">RSS Intelligence Feed</span>
+      </div>
       <div class="header-actions">
         <button onclick="openAddFeedModal()">+ Add Feed</button>
         <button class="secondary-btn" onclick="fetchFeeds()">Fetch Now</button>
         <button class="secondary-btn" onclick="triggerDigest()">Send Digest</button>
         <button class="secondary-btn" onclick="markAllRead()">Mark All Read</button>
+        <button class="secondary-btn" onclick="openClientsModal()">Clients</button>
         <button class="secondary-btn" onclick="logout()">Sign Out</button>
       </div>
     </div>
@@ -363,6 +431,10 @@
       <span class="close-modal" onclick="closeFeedModal()">&times;</span>
       <h2>Add Feed</h2>
       <div class="form-group">
+        <label>Client</label>
+        <select id="feedClient" onchange="onFeedClientChange()"></select>
+      </div>
+      <div class="form-group">
         <label>Feed URL</label>
         <input type="url" id="feedUrl" placeholder="https://example.com/feed">
       </div>
@@ -371,9 +443,9 @@
         <input type="text" id="feedTitle" placeholder="Feed title">
       </div>
       <div class="form-group">
-        <label>Category</label>
+        <label>Topic (category)</label>
         <select id="feedCategory">
-          <option value="">-- Select Category --</option>
+          <option value="">-- No topic --</option>
         </select>
       </div>
       <button onclick="addFeed()" style="width: 100%;">Add Feed</button>
@@ -384,12 +456,37 @@
   <div id="categoryModal" class="modal">
     <div class="modal-content">
       <span class="close-modal" onclick="closeCategoryModal()">&times;</span>
-      <h2>Add Category</h2>
+      <h2>Add Topic</h2>
       <div class="form-group">
-        <label>Category Name</label>
-        <input type="text" id="categoryName" placeholder="e.g., Tech, News, etc.">
+        <label>Client</label>
+        <select id="categoryClient"></select>
       </div>
-      <button onclick="addCategory()" style="width: 100%;">Add Category</button>
+      <div class="form-group">
+        <label>Topic Name</label>
+        <input type="text" id="categoryName" placeholder="e.g., Defence, Naval, etc.">
+      </div>
+      <button onclick="addCategory()" style="width: 100%;">Add Topic</button>
+    </div>
+  </div>
+
+  <!-- Clients Modal: manage clients and their digest recipients -->
+  <div id="clientsModal" class="modal">
+    <div class="modal-content">
+      <span class="close-modal" onclick="closeClientsModal()">&times;</span>
+      <h2>Clients</h2>
+      <p style="font-size:13px;color:#777;margin-bottom:14px;">
+        Each client gets its own daily digest email to the address below.
+      </p>
+      <div id="clientsList"></div>
+      <hr style="border:none;border-top:1px solid #ecf0f1;margin:18px 0;">
+      <div class="form-group">
+        <label>Add a client</label>
+        <input type="text" id="newClientName" placeholder="Client name">
+      </div>
+      <div class="form-group">
+        <input type="email" id="newClientEmail" placeholder="Digest email (optional)">
+      </div>
+      <button onclick="addClient()" style="width: 100%;">Add Client</button>
     </div>
   </div>
 
@@ -452,9 +549,11 @@
         const res = await fetch('/api/config');
         const config = await res.json();
         document.title = config.appName;
-        document.getElementById('appTitle').textContent = config.appName;
+        // The logo already carries "Chapel Street Group", so the subtitle drops a
+        // leading "CSG " to avoid doubling it (CSG RSS Intelligence Feed -> RSS…).
+        document.getElementById('appTitle').textContent = config.appName.replace(/^CSG\s+/i, '');
         document.getElementById('loginTitle').textContent = 'Sign in to ' + config.appName;
-        document.documentElement.style.setProperty('--accent', config.accentColor);
+        if (config.accentColor) document.documentElement.style.setProperty('--accent', config.accentColor);
       } catch {}
     }
 
@@ -495,12 +594,30 @@
       renderFeeds();
     }
 
+    async function loadClients() {
+      const res = await api('/api/clients');
+      clients = await res.json();
+      populateClientSelects();
+      renderFeeds();
+    }
+
+    // Switch the whole view to one client (or all clients when id is null).
+    function setClient(id) {
+      currentClientId = id;
+      currentFilter = { type: 'all', id: null };
+      renderFeeds();
+      loadArticles();
+    }
+
+    let clients = [];
+    let currentClientId = null; // null = all clients
     let currentFilter = { type: 'all', id: null };
     let articlesRequestGen = 0;
 
     function filterQuery() {
       if (currentFilter.type === 'feed') return `?feedId=${currentFilter.id}`;
       if (currentFilter.type === 'category') return `?categoryId=${currentFilter.id ?? 'none'}`;
+      if (currentClientId != null) return `?clientId=${currentClientId}`;
       return '';
     }
 
@@ -514,6 +631,7 @@
     }
 
     function refresh() {
+      loadClients();
       loadFeeds();
       loadArticles();
     }
@@ -534,49 +652,69 @@
       return n > 0 ? `<span class="unread-badge">${n}</span>` : '';
     }
 
+    // Renders the client switcher, then the two-level nav (topic -> feed) for
+    // the selected client, or every client's topics when "All clients" is on.
     function renderFeeds() {
       const list = document.getElementById('feedsList');
-      const totalUnread = feeds.reduce((sum, f) => sum + (f.unread_count || 0), 0);
 
-      let html = `
+      // Client switcher
+      const totalAll = clients.reduce((s, c) => s + (c.unread_count || 0), 0);
+      let html = '<div class="client-switcher">';
+      html += `<div class="client-tab ${currentClientId == null ? 'active' : ''}" onclick="setClient(null)">All${totalAll ? `<span class="count">${totalAll}</span>` : ''}</div>`;
+      for (const c of clients) {
+        html += `<div class="client-tab ${currentClientId === c.id ? 'active' : ''}" onclick="setClient(${c.id})">${esc(c.name)}${c.unread_count ? `<span class="count">${c.unread_count}</span>` : ''}</div>`;
+      }
+      html += '</div>';
+
+      // Feeds in scope
+      const visible = currentClientId == null ? feeds : feeds.filter(f => f.client_id === currentClientId);
+      const scopeUnread = visible.reduce((s, f) => s + (f.unread_count || 0), 0);
+      html += `
         <div class="nav-item ${currentFilter.type === 'all' ? 'active' : ''}" onclick="setFilter('all', null)">
-          <span class="title">All</span>
-          ${unreadBadge(totalUnread)}
+          <span class="title">${currentClientId == null ? 'All feeds' : 'All in ' + esc(clientName(currentClientId))}</span>
+          ${unreadBadge(scopeUnread)}
         </div>`;
 
-      if (feeds.length === 0) {
+      if (visible.length === 0) {
         html += '<div class="empty">No feeds yet</div>';
+        list.innerHTML = html;
+        return;
       }
 
-      // Group feeds by category (feeds arrive sorted by category, then title)
-      const groups = [];
-      for (const f of feeds) {
-        const catId = f.category_id || null;
-        let group = groups[groups.length - 1];
-        if (!group || group.id !== catId) {
-          group = { id: catId, name: f.category || 'Uncategorized', feeds: [], unread: 0 };
-          groups.push(group);
+      // Order: client -> topic -> feed. When a single client is selected we skip
+      // the repeated client header (the switcher already shows it).
+      const showClientHeaders = currentClientId == null;
+      let lastClient = undefined;
+      let lastCat = undefined;
+      for (const f of visible) {
+        if (showClientHeaders && f.client_id !== lastClient) {
+          lastClient = f.client_id;
+          lastCat = undefined;
+          html += `<div class="client-group"><span>${esc(f.client || 'Unassigned')}</span></div>`;
         }
-        group.feeds.push(f);
-        group.unread += f.unread_count || 0;
-      }
-
-      for (const g of groups) {
-        const catActive = currentFilter.type === 'category' && currentFilter.id === g.id;
+        const catId = f.category_id || null;
+        if (catId !== lastCat) {
+          lastCat = catId;
+          const catActive = currentFilter.type === 'category' && currentFilter.id === catId;
+          html += `
+            <div class="nav-item category ${catActive ? 'active' : ''}" onclick="setFilter('category', ${catId})">
+              <span class="title">${esc(f.category || 'Uncategorized')}</span>
+            </div>`;
+        }
         html += `
-          <div class="nav-item category ${catActive ? 'active' : ''}" onclick="setFilter('category', ${g.id})">
-            <span class="title">${esc(g.name)}</span>
-            ${unreadBadge(g.unread)}
-          </div>`;
-        html += g.feeds.map(f => `
           <div class="nav-item feed ${currentFilter.type === 'feed' && currentFilter.id === f.id ? 'active' : ''}" onclick="setFilter('feed', ${f.id})">
             <span class="title" title="${esc(f.title || f.url)}">${esc(f.title || f.url)}</span>
             ${unreadBadge(f.unread_count)}
             <button class="remove" onclick="event.stopPropagation(); removeFeed(${f.id})" title="Remove feed">&times;</button>
-          </div>`).join('');
+          </div>`;
       }
 
       list.innerHTML = html;
+    }
+
+    function clientName(id) {
+      const c = clients.find(x => x.id === id);
+      return c ? c.name : '';
     }
 
     function renderArticles() {
@@ -603,6 +741,7 @@
     }
 
     async function addFeed() {
+      const clientId = document.getElementById('feedClient').value || null;
       const url = document.getElementById('feedUrl').value;
       const title = document.getElementById('feedTitle').value;
       const categoryId = document.getElementById('feedCategory').value || null;
@@ -611,11 +750,15 @@
         alert('Please enter a feed URL');
         return;
       }
+      if (!clientId) {
+        alert('Please choose a client');
+        return;
+      }
 
       const res = await api('/api/feeds', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, title, categoryId })
+        body: JSON.stringify({ url, title, categoryId, clientId })
       });
 
       if (!res.ok) {
@@ -625,7 +768,7 @@
       }
 
       closeFeedModal();
-      loadFeeds();
+      refresh();
     }
 
     async function removeFeed(id) {
@@ -641,21 +784,26 @@
     }
 
     async function addCategory() {
+      const clientId = document.getElementById('categoryClient').value || null;
       const name = document.getElementById('categoryName').value;
       if (!name) {
-        alert('Please enter a category name');
+        alert('Please enter a topic name');
+        return;
+      }
+      if (!clientId) {
+        alert('Please choose a client');
         return;
       }
 
       const res = await api('/api/categories', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
+        body: JSON.stringify({ name, clientId })
       });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || 'Could not add category');
+        alert(data.error || 'Could not add topic');
         return;
       }
 
@@ -683,10 +831,16 @@
     async function triggerDigest() {
       const res = await api('/api/trigger-digest', { method: 'POST' });
       const data = await res.json();
-      alert(data.success ? `Digest sent with ${data.articleCount} articles` : `Error: ${data.error}`);
+      if (!data.success) { alert(`Error: ${data.error}`); return; }
+      const per = (data.perClient || []).filter(p => p.sent).map(p => `${p.client}: ${p.sent}`).join(', ');
+      alert(`Digest sent — ${data.articleCount} articles across ${data.clients} client(s)` + (per ? `\n${per}` : ''));
     }
 
     function openAddFeedModal() {
+      // Default the client to whatever the user is currently viewing.
+      const fc = document.getElementById('feedClient');
+      if (currentClientId != null) fc.value = String(currentClientId);
+      updateCategorySelect();
       document.getElementById('feedModal').classList.add('open');
     }
 
@@ -697,6 +851,8 @@
     }
 
     function openAddCategoryModal() {
+      const cc = document.getElementById('categoryClient');
+      if (currentClientId != null) cc.value = String(currentClientId);
       document.getElementById('categoryModal').classList.add('open');
     }
 
@@ -705,10 +861,76 @@
       document.getElementById('categoryName').value = '';
     }
 
+    // --- Clients management ---
+    function openClientsModal() {
+      renderClientsList();
+      document.getElementById('clientsModal').classList.add('open');
+    }
+    function closeClientsModal() {
+      document.getElementById('clientsModal').classList.remove('open');
+      document.getElementById('newClientName').value = '';
+      document.getElementById('newClientEmail').value = '';
+    }
+    window.openClientsModal = openClientsModal;
+
+    function renderClientsList() {
+      const el = document.getElementById('clientsList');
+      el.innerHTML = clients.map(c => `
+        <div class="form-group" style="display:flex;gap:8px;align-items:center;">
+          <span style="min-width:110px;font-weight:600;">${esc(c.name)}</span>
+          <input type="email" id="cemail-${c.id}" value="${esc(c.email || '')}" placeholder="digest email" style="flex:1;">
+          <button class="secondary-btn" onclick="saveClientEmail(${c.id})">Save</button>
+        </div>`).join('') || '<p style="color:#777;font-size:13px;">No clients yet.</p>';
+    }
+
+    async function saveClientEmail(id) {
+      const email = document.getElementById('cemail-' + id).value.trim();
+      const res = await api('/api/clients/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || 'Could not save'); return; }
+      await loadClients();
+      renderClientsList();
+    }
+
+    async function addClient() {
+      const name = document.getElementById('newClientName').value.trim();
+      const email = document.getElementById('newClientEmail').value.trim();
+      if (!name) { alert('Please enter a client name'); return; }
+      const res = await api('/api/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email })
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || 'Could not add client'); return; }
+      document.getElementById('newClientName').value = '';
+      document.getElementById('newClientEmail').value = '';
+      await loadClients();
+      renderClientsList();
+    }
+
+    // Fills the client dropdowns in the Add Feed / Add Topic modals.
+    function populateClientSelects() {
+      const opts = clients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+      const fc = document.getElementById('feedClient');
+      const cc = document.getElementById('categoryClient');
+      if (fc) { const prev = fc.value; fc.innerHTML = opts; if (prev) fc.value = prev; }
+      if (cc) { const prev = cc.value; cc.innerHTML = opts; if (prev) cc.value = prev; }
+      updateCategorySelect();
+    }
+
+    function onFeedClientChange() { updateCategorySelect(); }
+
+    // Topics offered in Add Feed are scoped to the chosen client.
     function updateCategorySelect() {
       const select = document.getElementById('feedCategory');
-      select.innerHTML = '<option value="">-- Select Category --</option>' +
-        categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      if (!select) return;
+      const clientId = parseInt(document.getElementById('feedClient')?.value, 10);
+      const scoped = categories.filter(c => !clientId || c.client_id === clientId);
+      select.innerHTML = '<option value="">-- No topic --</option>' +
+        scoped.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
     }
 
     function handleDeepLink() {
