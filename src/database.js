@@ -64,7 +64,49 @@ export async function initDatabase() {
       );
 
       CREATE INDEX IF NOT EXISTS idx_afh_article ON article_feed_hits(article_id);
+
+      -- A client is a monitoring workspace (e.g. SYOS, NLNG). Categories are
+      -- topics WITHIN a client, and every feed belongs to exactly one client.
+      -- Each client has its own digest recipient, so the daily email is split
+      -- one-per-client instead of one combined dump.
+      CREATE TABLE IF NOT EXISTS clients (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL UNIQUE,
+        email VARCHAR(320),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      ALTER TABLE categories ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id);
+      ALTER TABLE feeds ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id);
+      CREATE INDEX IF NOT EXISTS idx_feeds_client ON feeds(client_id);
+      CREATE INDEX IF NOT EXISTS idx_categories_client ON categories(client_id);
+
+      -- Topic names are now unique per client (SYOS/Defence and NLNG/Defence can
+      -- coexist), not globally. Drop the old global-unique on categories.name.
+      ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_name_key;
+      CREATE UNIQUE INDEX IF NOT EXISTS categories_client_name_key ON categories(client_id, name);
     `);
+
+    // Seed clients + backfill existing rows to SYOS. Idempotent: ON CONFLICT on
+    // the client names, and the backfills only touch rows whose client_id is
+    // still NULL, so re-running on every boot is a no-op after the first time.
+    const defaultEmail = process.env.EMAIL_TO || null;
+    await client.query(
+      `INSERT INTO clients (name, email) VALUES ('SYOS', $1), ('NLNG', $1), ('Project Odyssey', $1)
+       ON CONFLICT (name) DO NOTHING`,
+      [defaultEmail]
+    );
+    await client.query(
+      `UPDATE categories SET client_id = (SELECT id FROM clients WHERE name = 'SYOS')
+        WHERE client_id IS NULL`
+    );
+    await client.query(
+      `UPDATE feeds SET client_id = COALESCE(
+           (SELECT c.client_id FROM categories c WHERE c.id = feeds.category_id),
+           (SELECT id FROM clients WHERE name = 'SYOS'))
+        WHERE client_id IS NULL`
+    );
+
     console.log('Database initialized');
   } finally {
     client.release();

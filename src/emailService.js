@@ -23,23 +23,33 @@ function safeUrl(value) {
   return '#';
 }
 
-export async function sendDailyDigest(articles) {
+// Sends one digest. opts.to is the recipient; opts.label is the client name,
+// shown in the subject and heading so each client's email stands alone. Both
+// fall back to the legacy single-recipient behaviour when omitted.
+export async function sendDailyDigest(articles, opts = {}) {
   if (articles.length === 0) {
     console.log('No unread articles to send');
     return;
   }
 
+  const to = opts.to || process.env.EMAIL_TO;
+  if (!to) {
+    console.warn('Digest skipped: no recipient configured');
+    return;
+  }
+  const heading = opts.label ? `${APP_NAME} — ${opts.label}` : APP_NAME;
+
   const grouped = groupByCategory(articles);
-  const html = generateEmailHTML(grouped);
+  const html = generateEmailHTML(grouped, heading);
 
   try {
     await resend.emails.send({
       from: process.env.EMAIL_FROM || 'noreply@resend.dev',
-      to: process.env.EMAIL_TO,
-      subject: `${APP_NAME} - ${articles.length} new articles`,
+      to,
+      subject: `${heading} - ${articles.length} new articles`,
       html,
     });
-    console.log(`Email sent with ${articles.length} articles`);
+    console.log(`Email sent to ${to} with ${articles.length} articles (${opts.label || 'all'})`);
   } catch (err) {
     console.error('Error sending email:', err);
   }
@@ -54,11 +64,11 @@ function groupByCategory(articles) {
   }, {});
 }
 
-function generateEmailHTML(grouped) {
+function generateEmailHTML(grouped, heading = APP_NAME) {
   let html = `
     <html>
       <body style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
-        <h1 style="color: #2c3e50;">${escapeHtml(APP_NAME)}</h1>
+        <h1 style="color: #2c3e50;">${escapeHtml(heading)}</h1>
         <p style="color: #7f8c8d; font-size: 14px;">
           ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
         </p>

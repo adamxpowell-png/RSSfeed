@@ -206,23 +206,106 @@ app.use(express.static('public'));
 
 // API Routes
 
-// Categories
+// Resolves the SYOS client id, used as the default when a request omits one so
+// the pre-client single-workspace behaviour keeps working.
+async function defaultClientId() {
+  const r = await query("SELECT id FROM clients WHERE name = 'SYOS'");
+  return r.rows[0] ? r.rows[0].id : null;
+}
+
+// Returns a valid client id for a request-supplied value: the default when
+// absent, or null when the value is non-numeric or names no existing client
+// (so the handler can 400 rather than write an orphan row).
+async function resolveClientId(raw) {
+  if (raw === undefined || raw === null || raw === '') return await defaultClientId();
+  if (!/^\d+$/.test(String(raw))) return null;
+  const r = await query('SELECT id FROM clients WHERE id = $1', [raw]);
+  return r.rows[0] ? r.rows[0].id : null;
+}
+
+// Clients
+app.get('/api/clients', async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT cl.id, cl.name, cl.email,
+        (SELECT COUNT(*)::int FROM articles a
+           JOIN feeds f ON a.feed_id = f.id
+          WHERE f.client_id = cl.id AND a.read = FALSE) AS unread_count
+      FROM clients cl ORDER BY cl.name
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
+app.post('/api/clients', async (req, res) => {
+  const { name, email } = req.body || {};
+  if (typeof name !== 'string' || name.trim().length === 0 || name.length > 255) {
+    return res.status(400).json({ error: 'Client name must be between 1 and 255 characters' });
+  }
+  if (email != null && (typeof email !== 'string' || email.length > 320)) {
+    return res.status(400).json({ error: 'Email must be 320 characters or fewer' });
+  }
+  try {
+    const result = await query(
+      'INSERT INTO clients (name, email) VALUES ($1, $2) RETURNING *',
+      [name.trim(), email ? email.trim() : null]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    handleDbError(res, err, 'Client already exists');
+  }
+});
+
+app.patch('/api/clients/:id', async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid client id' });
+  const { email } = req.body || {};
+  if (email != null && (typeof email !== 'string' || email.length > 320)) {
+    return res.status(400).json({ error: 'Email must be 320 characters or fewer' });
+  }
+  try {
+    const result = await query(
+      'UPDATE clients SET email = $1 WHERE id = $2 RETURNING *',
+      [email ? email.trim() : null, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Client not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
+// Categories (topics within a client)
 app.post('/api/categories', async (req, res) => {
-  const { name } = req.body;
+  const { name, clientId } = req.body;
   if (typeof name !== 'string' || name.trim().length === 0 || name.length > 255) {
     return res.status(400).json({ error: 'Category name must be between 1 and 255 characters' });
   }
+  const resolvedClient = await resolveClientId(clientId);
+  if (!resolvedClient) return res.status(400).json({ error: 'Valid clientId is required' });
   try {
-    const result = await query('INSERT INTO categories (name) VALUES ($1) RETURNING *', [name.trim()]);
+    const result = await query(
+      'INSERT INTO categories (name, client_id) VALUES ($1, $2) RETURNING *',
+      [name.trim(), resolvedClient]
+    );
     res.json(result.rows[0]);
   } catch (err) {
-    handleDbError(res, err, 'Category already exists');
+    handleDbError(res, err, 'Category already exists for this client');
   }
 });
 
 app.get('/api/categories', async (req, res) => {
+  const { clientId } = req.query;
+  const params = [];
+  let where = '';
+  if (clientId !== undefined) {
+    if (!/^\d+$/.test(clientId)) return res.status(400).json({ error: 'clientId must be numeric' });
+    params.push(clientId);
+    where = 'WHERE client_id = $1';
+  }
   try {
-    const result = await query('SELECT * FROM categories ORDER BY name');
+    const result = await query(`SELECT * FROM categories ${where} ORDER BY name`, params);
     res.json(result.rows);
   } catch (err) {
     handleDbError(res, err);
@@ -231,7 +314,7 @@ app.get('/api/categories', async (req, res) => {
 
 // Feeds
 app.post('/api/feeds', async (req, res) => {
-  const { url, title, categoryId } = req.body;
+  const { url, title, categoryId, clientId } = req.body;
   const check = validateFeedUrl(url);
   if (!check.valid) {
     return res.status(400).json({ error: check.reason });
@@ -239,10 +322,12 @@ app.post('/api/feeds', async (req, res) => {
   if (title && (typeof title !== 'string' || title.length > 255)) {
     return res.status(400).json({ error: 'Title must be 255 characters or fewer' });
   }
+  const resolvedClient = await resolveClientId(clientId);
+  if (!resolvedClient) return res.status(400).json({ error: 'Valid clientId is required' });
   try {
     const result = await query(
-      'INSERT INTO feeds (url, title, category_id) VALUES ($1, $2, $3) RETURNING *',
-      [url, title || url, categoryId || null]
+      'INSERT INTO feeds (url, title, category_id, client_id) VALUES ($1, $2, $3, $4) RETURNING *',
+      [url, title || url, categoryId || null, resolvedClient]
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -253,11 +338,12 @@ app.post('/api/feeds', async (req, res) => {
 app.get('/api/feeds', async (req, res) => {
   try {
     const result = await query(`
-      SELECT f.*, c.name as category,
+      SELECT f.*, c.name as category, cl.name as client,
         (SELECT COUNT(*)::int FROM articles a WHERE a.feed_id = f.id AND a.read = FALSE) AS unread_count
       FROM feeds f
       LEFT JOIN categories c ON f.category_id = c.id
-      ORDER BY c.name, f.title
+      LEFT JOIN clients cl ON f.client_id = cl.id
+      ORDER BY cl.name, c.name, f.title
     `);
     res.json(result.rows);
   } catch (err) {
@@ -279,9 +365,14 @@ app.delete('/api/feeds/:id', async (req, res) => {
 // Returns null if a param is present but not numeric, so handlers can 400 instead
 // of passing garbage to pg (an unhandled query rejection would kill the process).
 function articleFilter(queryParams) {
-  const { feedId, categoryId } = queryParams;
+  const { feedId, categoryId, clientId } = queryParams;
   const conditions = [];
   const params = [];
+  if (clientId !== undefined) {
+    if (!/^\d+$/.test(clientId)) return null;
+    params.push(clientId);
+    conditions.push(`f.client_id = $${params.length}`);
+  }
   if (feedId !== undefined) {
     if (!/^\d+$/.test(feedId)) return null;
     params.push(feedId);
@@ -303,15 +394,15 @@ function articleFilter(queryParams) {
 app.get('/api/articles', async (req, res) => {
   const filter = articleFilter(req.query);
   if (!filter) {
-    return res.status(400).json({ error: 'feedId and categoryId must be numeric' });
+    return res.status(400).json({ error: 'clientId, feedId and categoryId must be numeric' });
   }
   const where = filter.conditions.length ? `WHERE ${filter.conditions.join(' AND ')}` : '';
   try {
     const result = await query(`
       SELECT
         a.id, a.title, a.url, a.description, a.published_at, a.read,
-        f.id as feed_id, f.title as feed_title,
-        c.name as category,
+        f.id as feed_id, f.title as feed_title, f.client_id,
+        c.name as category, cl.name as client,
         (SELECT COUNT(*)::int FROM article_feed_hits h WHERE h.article_id = a.id) AS hit_count,
         (SELECT string_agg(f2.title, ', ' ORDER BY f2.title)
            FROM article_feed_hits h
@@ -320,6 +411,7 @@ app.get('/api/articles', async (req, res) => {
       FROM articles a
       JOIN feeds f ON a.feed_id = f.id
       LEFT JOIN categories c ON f.category_id = c.id
+      LEFT JOIN clients cl ON f.client_id = cl.id
       ${where}
       ORDER BY a.published_at DESC
       LIMIT 200
@@ -333,7 +425,7 @@ app.get('/api/articles', async (req, res) => {
 app.patch('/api/articles/mark-all-read', async (req, res) => {
   const filter = articleFilter(req.query);
   if (!filter) {
-    return res.status(400).json({ error: 'feedId and categoryId must be numeric' });
+    return res.status(400).json({ error: 'clientId, feedId and categoryId must be numeric' });
   }
   const scope = filter.conditions.length ? `AND ${filter.conditions.join(' AND ')}` : '';
   try {

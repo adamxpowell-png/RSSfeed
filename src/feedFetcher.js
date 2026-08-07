@@ -136,19 +136,27 @@ export async function backfillDedupeKeys(batchSize = 500) {
   return processed;
 }
 
-export async function getUnreadArticles() {
+// Unread articles, optionally scoped to a single client. No clientId → all
+// unread (legacy behaviour). Used per-client to build one digest per client.
+export async function getUnreadArticles(clientId = null) {
+  const params = [];
+  let clientWhere = '';
+  if (clientId != null) {
+    params.push(clientId);
+    clientWhere = ` AND f.client_id = $${params.length}`;
+  }
   const result = await query(`
     SELECT
       a.id, a.title, a.url, a.description, a.published_at,
-      f.id as feed_id, f.title as feed_title,
+      f.id as feed_id, f.title as feed_title, f.client_id,
       c.name as category,
       (SELECT COUNT(*)::int FROM article_feed_hits h WHERE h.article_id = a.id) AS hit_count
     FROM articles a
     JOIN feeds f ON a.feed_id = f.id
     LEFT JOIN categories c ON f.category_id = c.id
-    WHERE a.read = FALSE
+    WHERE a.read = FALSE${clientWhere}
     ORDER BY c.name, a.published_at DESC
-  `);
+  `, params);
   return result.rows;
 }
 
