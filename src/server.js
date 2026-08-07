@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
@@ -22,9 +21,9 @@ const APP_PASSWORD = process.env.APP_PASSWORD || process.env.READER_PASSWORD || 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // SESSION_SECRET must be set independently in production and must NEVER derive
-// from the password. The signed cookie value is a constant ('authenticated'),
-// so a password-derived secret would turn any captured cookie into an offline
-// password-cracking oracle. In production an unset secret is a fatal
+// from the password. The signed cookie value is attacker-predictable (an expiry
+// timestamp), so a password-derived secret would turn any captured cookie into
+// an offline password-cracking oracle. In production an unset secret is a fatal
 // misconfiguration (fail closed). In development we mint an ephemeral random
 // secret so local runs work without config — cookies simply reset per process.
 const RAW_SESSION_SECRET = process.env.SESSION_SECRET || '';
@@ -58,7 +57,9 @@ app.use(helmet({
     },
   },
 }));
-app.use(cors());
+// No CORS: the frontend is served from the same origin as the API, so no
+// cross-origin access is needed. Emitting Access-Control-Allow-Origin: * on an
+// authenticated, per-client instance would be a needless data-exposure risk.
 app.use(express.json({ limit: '10kb' }));
 app.use(cookieParser(SESSION_SECRET));
 
@@ -82,9 +83,17 @@ function requireAuth(req, res, next) {
   if (!AUTH_CONFIGURED) {
     return res.status(503).json({ error: 'Service unavailable: authentication is not configured' });
   }
-  if (req.signedCookies && req.signedCookies.auth === 'authenticated') return next();
+  // The signed cookie carries its own expiry (ms epoch). Reject if missing,
+  // malformed, or past expiry — checked server-side, so a captured cookie stops
+  // working after 30 days even if the browser keeps sending it. The signature
+  // (SESSION_SECRET) is what prevents a client forging the timestamp.
+  const raw = req.signedCookies && req.signedCookies.auth;
+  const expiresAt = Number(raw);
+  if (raw && Number.isFinite(expiresAt) && expiresAt > Date.now()) return next();
   return res.status(401).json({ error: 'Authentication required' });
 }
+
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 app.post('/api/login', loginLimiter, (req, res) => {
   if (!AUTH_CONFIGURED) {
@@ -94,12 +103,22 @@ app.post('/api/login', loginLimiter, (req, res) => {
   if (typeof password !== 'string' || !timingSafeMatch(password, APP_PASSWORD)) {
     return res.status(401).json({ error: 'Incorrect password' });
   }
-  res.cookie('auth', 'authenticated', {
+  res.cookie('auth', String(Date.now() + SESSION_MAX_AGE_MS), {
     signed: true,
     httpOnly: true,
     secure: IS_PRODUCTION,
     sameSite: 'lax',
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    maxAge: SESSION_MAX_AGE_MS,
+  });
+  res.json({ success: true });
+});
+
+// Logout: clear the session cookie. Reachable without auth so it always works.
+app.post('/api/logout', (req, res) => {
+  res.clearCookie('auth', {
+    httpOnly: true,
+    secure: IS_PRODUCTION,
+    sameSite: 'lax',
   });
   res.json({ success: true });
 });

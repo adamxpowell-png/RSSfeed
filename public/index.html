@@ -336,6 +336,7 @@
         <button class="secondary-btn" onclick="fetchFeeds()">Fetch Now</button>
         <button class="secondary-btn" onclick="triggerDigest()">Send Digest</button>
         <button class="secondary-btn" onclick="markAllRead()">Mark All Read</button>
+        <button class="secondary-btn" onclick="logout()">Sign Out</button>
       </div>
     </div>
   </header>
@@ -739,6 +740,13 @@
 
     // The login form submit (button click or Enter) drives sign-in.
     document.getElementById('loginForm').addEventListener('submit', submitLogin);
+
+    // Sign out: clear the session cookie, then reload (the login modal reappears).
+    async function logout() {
+      try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}
+      window.location.reload();
+    }
+    window.logout = logout;
 
     // Load on page load
     loadConfig();
