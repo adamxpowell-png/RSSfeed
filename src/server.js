@@ -126,8 +126,8 @@ app.post('/api/logout', (req, res) => {
 // Public: instance branding for the frontend
 app.get('/api/config', (req, res) => {
   res.json({
-    appName: process.env.APP_NAME || 'RSS Feed Reader',
-    accentColor: process.env.APP_COLOR || '#3498db',
+    appName: process.env.APP_NAME || 'CSG RSS Intelligence Feed',
+    accentColor: process.env.APP_COLOR || '#000648',
     authRequired: AUTH_CONFIGURED,
   });
 });

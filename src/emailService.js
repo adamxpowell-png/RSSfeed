@@ -2,7 +2,7 @@ import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-const APP_NAME = process.env.APP_NAME || 'Daily Feed Digest';
+const APP_NAME = process.env.APP_NAME || 'CSG RSS Intelligence Feed';
 
 // Escape untrusted feed content before embedding in email HTML
 function escapeHtml(value) {
