@@ -831,7 +831,13 @@
     async function triggerDigest() {
       const res = await api('/api/trigger-digest', { method: 'POST' });
       const data = await res.json();
-      if (!data.success) { alert(`Error: ${data.error}`); return; }
+      const errs = data.errors || [];
+      if (errs.length) {
+        alert('Digest could not be sent:\n' + errs.join('\n') +
+          '\n\nLikely cause: the sending domain isn\'t verified in Resend, or EMAIL_FROM is wrong. Articles were NOT marked read, so they\'ll retry.');
+        return;
+      }
+      if (!data.success) { alert(`Error: ${data.error || 'unknown'}`); return; }
       const per = (data.perClient || []).filter(p => p.sent).map(p => `${p.client}: ${p.sent}`).join(', ');
       alert(`Digest sent — ${data.articleCount} articles across ${data.clients} client(s)` + (per ? `\n${per}` : ''));
     }

@@ -14,13 +14,14 @@ export async function runDigests() {
 
   if (!clients.length) {
     const articles = await getUnreadArticles();
-    await sendDailyDigest(articles);
-    await markArticlesAsRead(articles.map((a) => a.id));
-    return { success: true, articleCount: articles.length, clients: 0 };
+    const r = await sendDailyDigest(articles);
+    if (r.ok && articles.length) await markArticlesAsRead(articles.map((a) => a.id));
+    return { success: true, articleCount: r.ok ? articles.length : 0, clients: 0, error: r.error };
   }
 
   let total = 0;
   const perClient = [];
+  const errors = [];
   for (const client of clients) {
     const to = client.email || process.env.EMAIL_TO;
     const articles = await getUnreadArticles(client.id);
@@ -30,16 +31,23 @@ export async function runDigests() {
     }
     if (!to) {
       console.warn(`Digest for ${client.name}: ${articles.length} unread but no recipient — left unread`);
-      perClient.push({ client: client.name, sent: 0, skipped: 'no recipient' });
+      perClient.push({ client: client.name, sent: 0, error: 'no recipient' });
+      errors.push(`${client.name}: no recipient`);
       continue;
     }
-    await sendDailyDigest(articles, { to, label: client.name });
-    // Mark read only after a successful send, and only this client's articles.
-    await markArticlesAsRead(articles.map((a) => a.id));
-    total += articles.length;
-    perClient.push({ client: client.name, sent: articles.length });
+    const r = await sendDailyDigest(articles, { to, label: client.name });
+    if (r.ok) {
+      // Mark read ONLY after a confirmed send — a rejected send leaves the
+      // articles unread so they are retried in the next digest, not lost.
+      await markArticlesAsRead(articles.map((a) => a.id));
+      total += articles.length;
+      perClient.push({ client: client.name, sent: articles.length });
+    } else {
+      perClient.push({ client: client.name, sent: 0, error: r.error });
+      errors.push(`${client.name}: ${r.error}`);
+    }
   }
-  return { success: true, articleCount: total, clients: clients.length, perClient };
+  return { success: errors.length === 0, articleCount: total, clients: clients.length, perClient, errors };
 }
 
 export function startScheduler() {

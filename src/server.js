@@ -452,10 +452,9 @@ app.patch('/api/articles/:id/read', async (req, res) => {
 // Manual trigger for digest
 app.post('/api/trigger-digest', expensiveLimiter, async (req, res) => {
   const result = await triggerDigestNow();
-  if (!result.success) {
-    console.error('Digest error:', result.error);
-    return res.status(500).json({ success: false, error: 'Digest failed - check server logs' });
-  }
+  // Always return the detail (per-client sends + any errors) so the UI can show
+  // the real reason a digest didn't arrive instead of a false success.
+  if (result.error && !result.perClient) console.error('Digest error:', result.error);
   res.json(result);
 });
 

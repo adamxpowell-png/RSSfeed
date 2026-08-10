@@ -26,16 +26,20 @@ function safeUrl(value) {
 // Sends one digest. opts.to is the recipient; opts.label is the client name,
 // shown in the subject and heading so each client's email stands alone. Both
 // fall back to the legacy single-recipient behaviour when omitted.
+// Returns { ok, error? }. IMPORTANT: the Resend SDK does NOT throw on a rejected
+// send (unverified domain, bad key, etc.) — it resolves with an { error } field.
+// We must inspect that, or a refusal looks like success and the caller marks the
+// articles read and loses them. ok:false means "do not mark these read".
 export async function sendDailyDigest(articles, opts = {}) {
   if (articles.length === 0) {
     console.log('No unread articles to send');
-    return;
+    return { ok: true, sent: 0 };
   }
 
   const to = opts.to || process.env.EMAIL_TO;
   if (!to) {
     console.warn('Digest skipped: no recipient configured');
-    return;
+    return { ok: false, error: 'no recipient configured' };
   }
   const heading = opts.label ? `${APP_NAME} — ${opts.label}` : APP_NAME;
 
@@ -43,15 +47,22 @@ export async function sendDailyDigest(articles, opts = {}) {
   const html = generateEmailHTML(grouped, heading);
 
   try {
-    await resend.emails.send({
-      from: process.env.EMAIL_FROM || 'noreply@resend.dev',
+    const { data, error } = await resend.emails.send({
+      from: process.env.EMAIL_FROM || 'onboarding@resend.dev',
       to,
       subject: `${heading} - ${articles.length} new articles`,
       html,
     });
-    console.log(`Email sent to ${to} with ${articles.length} articles (${opts.label || 'all'})`);
+    if (error) {
+      const msg = error.message || JSON.stringify(error);
+      console.error(`Resend rejected digest to ${to} (${opts.label || 'all'}): ${msg}`);
+      return { ok: false, error: msg };
+    }
+    console.log(`Email sent to ${to} with ${articles.length} articles (${opts.label || 'all'}) id=${data && data.id}`);
+    return { ok: true, sent: articles.length, id: data && data.id };
   } catch (err) {
     console.error('Error sending email:', err);
+    return { ok: false, error: err.message };
   }
 }
 
