@@ -78,6 +78,12 @@ export async function initDatabase() {
 
       ALTER TABLE categories ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id);
       ALTER TABLE feeds ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id);
+
+      -- Whether a topic's articles are included in the emailed digest. The reader
+      -- always shows everything; turning this off makes a topic "context" that
+      -- you browse in the tool but is never emailed (e.g. whole-outlet industry
+      -- feeds vs. keyword mention feeds). Default true = behaves as before.
+      ALTER TABLE categories ADD COLUMN IF NOT EXISTS in_digest BOOLEAN DEFAULT TRUE;
       CREATE INDEX IF NOT EXISTS idx_feeds_client ON feeds(client_id);
       CREATE INDEX IF NOT EXISTS idx_categories_client ON categories(client_id);
 

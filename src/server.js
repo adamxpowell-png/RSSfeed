@@ -312,6 +312,25 @@ app.get('/api/categories', async (req, res) => {
   }
 });
 
+// Toggle whether a topic feeds the emailed digest (reader is unaffected).
+app.patch('/api/categories/:id', async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid category id' });
+  const { in_digest } = req.body || {};
+  if (typeof in_digest !== 'boolean') {
+    return res.status(400).json({ error: 'in_digest must be true or false' });
+  }
+  try {
+    const result = await query(
+      'UPDATE categories SET in_digest = $1 WHERE id = $2 RETURNING *',
+      [in_digest, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Category not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
 // Feeds
 app.post('/api/feeds', async (req, res) => {
   const { url, title, categoryId, clientId } = req.body;
@@ -338,7 +357,7 @@ app.post('/api/feeds', async (req, res) => {
 app.get('/api/feeds', async (req, res) => {
   try {
     const result = await query(`
-      SELECT f.*, c.name as category, cl.name as client,
+      SELECT f.*, c.name as category, c.in_digest as category_in_digest, cl.name as client,
         (SELECT COUNT(*)::int FROM articles a WHERE a.feed_id = f.id AND a.read = FALSE) AS unread_count
       FROM feeds f
       LEFT JOIN categories c ON f.category_id = c.id

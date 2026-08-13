@@ -68,6 +68,20 @@
       opacity: 0.8;
       margin-left: 4px;
     }
+    /* Per-topic digest toggle: "in the email" vs "reader-only context" */
+    .digest-toggle {
+      margin-left: auto;
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      white-space: nowrap;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .digest-toggle.on { background: var(--accent); color: #fff; }
+    .digest-toggle.off { background: #e6e2ee; color: #777; }
+    .digest-toggle:hover { border-color: var(--accent); }
+    .nav-item.category.active .digest-toggle.on { background: #fff; color: var(--accent); }
 
     .container {
       max-width: 1200px;
@@ -642,6 +656,16 @@
       loadArticles();
     }
 
+    // Toggle whether a topic feeds the email digest. Reader view is unaffected.
+    async function toggleDigest(catId, val) {
+      await api('/api/categories/' + catId, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ in_digest: val })
+      });
+      loadFeeds();
+    }
+
     async function loadCategories() {
       const res = await api('/api/categories');
       categories = await res.json();
@@ -696,9 +720,15 @@
         if (catId !== lastCat) {
           lastCat = catId;
           const catActive = currentFilter.type === 'category' && currentFilter.id === catId;
+          const inDigest = f.category_in_digest !== false; // null (uncategorised) counts as in-digest
+          const toggle = catId == null ? '' :
+            `<span class="digest-toggle ${inDigest ? 'on' : 'off'}"
+                   title="${inDigest ? 'In email digest — click to make reader-only' : 'Reader-only — click to add to the email digest'}"
+                   onclick="event.stopPropagation(); toggleDigest(${catId}, ${!inDigest})">${inDigest ? '✉ digest' : 'context'}</span>`;
           html += `
             <div class="nav-item category ${catActive ? 'active' : ''}" onclick="setFilter('category', ${catId})">
               <span class="title">${esc(f.category || 'Uncategorized')}</span>
+              ${toggle}
             </div>`;
         }
         html += `

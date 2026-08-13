@@ -155,6 +155,7 @@ export async function getUnreadArticles(clientId = null) {
     JOIN feeds f ON a.feed_id = f.id
     LEFT JOIN categories c ON f.category_id = c.id
     WHERE a.read = FALSE${clientWhere}
+      AND c.in_digest IS NOT FALSE
     ORDER BY c.name, a.published_at DESC
   `, params);
   return result.rows;
