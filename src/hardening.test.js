@@ -17,9 +17,20 @@ if (!TEST_DB) {
 
   const db = await import('./database.js');
   const ff = await import('./feedFetcher.js');
+  const al = await import('./alertService.js');
+
+  // Fake email sender: records what would have been sent, always "ok" so the
+  // ledger records, so alert tests never touch Resend.
+  const makeSender = () => {
+    const sent = [];
+    const send = async (articles, opts) => { sent.push({ articles, opts }); return { ok: true, sent: articles.length }; };
+    return { send, sent };
+  };
+  const addRule = async (client, term, enabled = true) =>
+    (await db.query('INSERT INTO alert_rules (client_id, term, enabled) VALUES ($1,$2,$3) RETURNING id', [client, term, enabled])).rows[0].id;
 
   const reset = async () => {
-    await db.query('DROP TABLE IF EXISTS article_feed_hits, articles, feeds, categories, clients CASCADE');
+    await db.query('DROP TABLE IF EXISTS article_alerts, alert_rules, article_feed_hits, articles, feeds, categories, clients CASCADE');
     await db.initDatabase();
   };
   const clientId = async (name) => (await db.query('SELECT id FROM clients WHERE name=$1', [name])).rows[0].id;
@@ -94,6 +105,94 @@ if (!TEST_DB) {
     const row = (await db.query('SELECT last_error, error_count FROM feeds WHERE id=$1', [bad.id])).rows[0];
     assert.ok(row.last_error, 'the fetch failure is recorded');
     assert.equal(row.error_count, 1, 'consecutive-failure count incremented');
+  });
+
+  test('priority alert: a matching new article fires once, case-insensitively, then never again', async () => {
+    await reset();
+    const syos = await clientId('SYOS');
+    const c = await addCat('t', syos);
+    const f = await addFeed('http://a', syos, c);
+    await addRule(syos, 'takeover');
+    await ff.storeArticle(f, { link: 'http://x/1', title: 'Board confirms TAKEOVER talks' });
+
+    const s1 = makeSender();
+    const r1 = await al.runAlertScan({ send: s1.send });
+    assert.equal(r1.alerted, 1, 'the matching story alerts');
+    assert.equal(s1.sent.length, 1, 'one client email');
+    assert.deepEqual(s1.sent[0].articles[0].matched_terms, ['takeover'], 'the firing term is reported');
+
+    const led = (await db.query('SELECT matched_terms FROM article_alerts')).rows;
+    assert.equal(led.length, 1);
+    assert.equal(led[0].matched_terms, 'takeover', 'ledger records what fired');
+
+    const s2 = makeSender();
+    const r2 = await al.runAlertScan({ send: s2.send });
+    assert.equal(r2.alerted, 0, 'the same story does not alert twice');
+    assert.equal(s2.sent.length, 0);
+  });
+
+  test('priority alert: a term only fires for the client that owns the rule', async () => {
+    await reset();
+    const syos = await clientId('SYOS'), nlng = await clientId('NLNG');
+    const cs = await addCat('t', syos), cn = await addCat('t', nlng);
+    const fs = await addFeed('http://s', syos, cs);
+    const fn = await addFeed('http://n', nlng, cn);
+    await addRule(syos, 'grounding'); // only SYOS watches it
+    await ff.storeArticle(fn, { link: 'http://x/n', title: 'Fleet grounding reported' }); // NLNG feed
+    await ff.storeArticle(fs, { link: 'http://x/s', title: 'Fleet grounding reported' }); // SYOS feed
+
+    const s = makeSender();
+    const r = await al.runAlertScan({ send: s.send });
+    assert.equal(r.alerted, 1, 'only the SYOS copy alerts');
+    assert.equal(s.sent[0].opts.label, 'SYOS');
+  });
+
+  test('priority alert: a disabled rule does not fire', async () => {
+    await reset();
+    const syos = await clientId('SYOS');
+    const c = await addCat('t', syos);
+    const f = await addFeed('http://a', syos, c);
+    await addRule(syos, 'bid', false); // disabled
+    await ff.storeArticle(f, { link: 'http://x/1', title: 'Takeover bid launched' });
+    const s = makeSender();
+    const r = await al.runAlertScan({ send: s.send });
+    assert.equal(r.alerted, 0, 'disabled term is inert');
+  });
+
+  test('priority alert: articles that predate the feature are baseline-suppressed (no blast)', async () => {
+    await reset();
+    const syos = await clientId('SYOS');
+    const c = await addCat('t', syos);
+    const f = await addFeed('http://a', syos, c);
+    // Story arrives BEFORE the alert feature/rules exist...
+    await ff.storeArticle(f, { link: 'http://x/old', title: 'Historic takeover completed' });
+    // ...then the alert migration runs again (as on the deploy that ships alerts).
+    await db.initDatabase();
+    await addRule(syos, 'takeover');
+    const s = makeSender();
+    const r = await al.runAlertScan({ send: s.send });
+    assert.equal(r.alerted, 0, 'pre-existing coverage never retroactively alerts');
+  });
+
+  test('email-selection: returns unread from chosen feeds only, incl. stories they carried via dedup', async () => {
+    await reset();
+    const syos = await clientId('SYOS');
+    const c = await addCat('t', syos);
+    const fPick = await addFeed('http://pick', syos, c);
+    const fOther = await addFeed('http://other', syos, c);
+    // A story that arrives on the OTHER feed first, then also on the picked feed
+    // (deduped onto other's row but carried by pick) must still be included.
+    const shared = { link: 'http://wire/s', title: 'Shared story' };
+    await ff.storeArticle(fOther, shared);
+    await ff.storeArticle(fPick, shared);
+    // A story only on the other (unpicked) feed must be excluded.
+    await ff.storeArticle(fOther, { link: 'http://wire/o', title: 'Other-only story' });
+    // A story only on the picked feed must be included.
+    await ff.storeArticle(fPick, { link: 'http://wire/p', title: 'Pick-only story' });
+
+    const rows = await ff.getUnreadForSelection([fPick.id]);
+    const titles = rows.map((r) => r.title).sort();
+    assert.deepEqual(titles, ['Pick-only story', 'Shared story'], 'includes carried + own, excludes other-only');
   });
 
   test('per-feed digest control: a single feed can be excluded / cherry-picked', async () => {

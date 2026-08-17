@@ -13,21 +13,29 @@ const DEDUPE_WINDOW_DAYS = 21;
 // so overlapping runs — e.g. the 30-min fetch and the 8 AM digest — never race.
 let fetchInProgress = false;
 
-export async function fetchFeeds() {
+// feedIds: optional array of feed ids to fetch just those (per-feed "pull").
+// Omitted/empty → fetch every feed (the scheduled behaviour).
+export async function fetchFeeds(feedIds = null) {
   if (fetchInProgress) {
     console.log('Feed fetch already in progress, skipping');
     return;
   }
   fetchInProgress = true;
   try {
-    return await doFetchFeeds();
+    return await doFetchFeeds(feedIds);
   } finally {
     fetchInProgress = false;
   }
 }
 
-async function doFetchFeeds() {
-  const result = await query('SELECT id, url, title, client_id FROM feeds');
+async function doFetchFeeds(feedIds = null) {
+  const hasFilter = Array.isArray(feedIds) && feedIds.length > 0;
+  const result = await query(
+    hasFilter
+      ? 'SELECT id, url, title, client_id FROM feeds WHERE id = ANY($1)'
+      : 'SELECT id, url, title, client_id FROM feeds',
+    hasFilter ? [feedIds] : []
+  );
   const feeds = result.rows;
   const stats = { inserted: 0, deduped: 0, failed: 0 };
 
@@ -180,6 +188,33 @@ export async function getUnreadArticles(clientId = null) {
       )
     ORDER BY c.name, a.published_at DESC
   `, params);
+  return result.rows;
+}
+
+// Unread articles surfaced by a specific SET of feeds, for the on-demand
+// "email selected feeds" action. Uses article_feed_hits so a story counts if ANY
+// selected feed carried it (even when it was de-duplicated onto a different
+// feed's row), and — unlike the daily digest — ignores in_digest: the user picked
+// these feeds explicitly, so everything they surfaced is included.
+export async function getUnreadForSelection(feedIds) {
+  if (!Array.isArray(feedIds) || feedIds.length === 0) return [];
+  const result = await query(`
+    SELECT
+      a.id, a.title, a.url, a.description, a.published_at,
+      f.id as feed_id, f.title as feed_title, f.client_id,
+      c.name as category, cl.name as client_name,
+      COALESCE(cl.email, $2) as recipient
+    FROM articles a
+    JOIN feeds f ON a.feed_id = f.id
+    LEFT JOIN categories c ON f.category_id = c.id
+    LEFT JOIN clients cl ON cl.id = f.client_id
+    WHERE a.read = FALSE
+      AND EXISTS (
+        SELECT 1 FROM article_feed_hits h
+        WHERE h.article_id = a.id AND h.feed_id = ANY($1)
+      )
+    ORDER BY cl.name, c.name, a.published_at DESC
+  `, [feedIds, process.env.EMAIL_TO || null]);
   return result.rows;
 }
 

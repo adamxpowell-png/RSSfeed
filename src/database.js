@@ -101,7 +101,46 @@ export async function initDatabase() {
       -- coexist), not globally. Drop the old global-unique on categories.name.
       ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_name_key;
       CREATE UNIQUE INDEX IF NOT EXISTS categories_client_name_key ON categories(client_id, name);
+
+      -- Instant priority alerts. A rule is a high-stakes phrase watched for a
+      -- single client (e.g. "administration"/"takeover" for Project Odyssey,
+      -- "grounding"/"incident" for SYOS). When a newly-fetched article's title or
+      -- description contains an enabled rule's term, that client gets an immediate
+      -- email — separate from, and ahead of, the 8 AM digest. Matching is a plain
+      -- case-insensitive substring, so terms are phrases, not Boolean queries.
+      CREATE TABLE IF NOT EXISTS alert_rules (
+        id SERIAL PRIMARY KEY,
+        client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        term VARCHAR(255) NOT NULL,
+        enabled BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (client_id, term)
+      );
+      CREATE INDEX IF NOT EXISTS idx_alert_rules_client ON alert_rules(client_id) WHERE enabled;
+
+      -- Alert ledger: one row per article that has already been considered for a
+      -- priority alert, so the same story never alerts twice. matched_terms is the
+      -- terms that fired (NULL = a baseline/suppressed row: the article predates
+      -- the alert feature or its rules and must not retroactively alert).
+      CREATE TABLE IF NOT EXISTS article_alerts (
+        article_id INTEGER PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+        client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+        matched_terms TEXT,
+        alerted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
+
+    // Baseline-suppress every article that already exists the first time this
+    // migration runs: mark them all "considered" (matched_terms NULL) so that
+    // enabling the alert feature — or adding a rule — never blasts a client with
+    // an alert for old, already-seen coverage. Only articles fetched AFTER this
+    // point become alert candidates. Idempotent via ON CONFLICT: rows added by a
+    // real alert are never overwritten because we never touch existing keys.
+    await client.query(
+      `INSERT INTO article_alerts (article_id, matched_terms)
+         SELECT id, NULL FROM articles
+       ON CONFLICT (article_id) DO NOTHING`
+    );
 
     // Seed clients + backfill existing rows to SYOS. Idempotent: ON CONFLICT on
     // the client names, and the backfills only touch rows whose client_id is

@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDatabase, query } from './database.js';
-import { startScheduler, triggerDigestNow } from './scheduler.js';
+import { startScheduler, triggerDigestNow, triggerAlertsNow, sendSelectionNow } from './scheduler.js';
 import { fetchFeeds, getUnreadArticles, backfillDedupeKeys } from './feedFetcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -77,6 +77,9 @@ app.use(cookieParser(SESSION_SECRET));
 const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 const expensiveLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false });
+// Per-feed pull / email-selection are lighter and used interactively, so they get
+// a more generous ceiling than the full-fetch / full-digest jobs.
+const selectionLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 40, standardHeaders: true, legacyHeaders: false });
 app.use(globalLimiter);
 
 // --- Auth ---
@@ -229,6 +232,19 @@ async function defaultClientId() {
 // unhandled rejection that takes the process down.
 function isPgInt(raw) {
   return /^\d+$/.test(String(raw)) && Number(raw) <= 2147483647;
+}
+
+// Parses a request-supplied list of feed ids. Returns an array of ints, or null
+// if the payload isn't an array of valid pg ints (so the handler can 400 rather
+// than feed garbage to a query). Caps the list length as a cheap abuse guard.
+function parseFeedIds(raw) {
+  if (!Array.isArray(raw) || raw.length > 1000) return null;
+  const ids = [];
+  for (const v of raw) {
+    if (!isPgInt(v)) return null;
+    ids.push(Number(v));
+  }
+  return ids;
 }
 
 // Returns a valid client id for a request-supplied value: the default when
@@ -427,6 +443,82 @@ app.delete('/api/feeds/:id', async (req, res) => {
   }
 });
 
+// Alert rules (per-client priority watch terms)
+app.get('/api/alert-rules', async (req, res) => {
+  const { clientId } = req.query;
+  const params = [];
+  let where = '';
+  if (clientId !== undefined) {
+    if (!/^\d+$/.test(clientId)) return res.status(400).json({ error: 'clientId must be numeric' });
+    params.push(clientId);
+    where = 'WHERE r.client_id = $1';
+  }
+  try {
+    const result = await query(
+      `SELECT r.id, r.client_id, r.term, r.enabled, r.created_at, cl.name AS client
+         FROM alert_rules r JOIN clients cl ON cl.id = r.client_id
+         ${where} ORDER BY cl.name, r.term`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
+app.post('/api/alert-rules', async (req, res) => {
+  const { term, clientId } = req.body || {};
+  if (typeof term !== 'string' || term.trim().length === 0 || term.length > 255) {
+    return res.status(400).json({ error: 'Watch term must be between 1 and 255 characters' });
+  }
+  const resolvedClient = await resolveClientId(clientId);
+  if (!resolvedClient) return res.status(400).json({ error: 'Valid clientId is required' });
+  try {
+    const result = await query(
+      'INSERT INTO alert_rules (client_id, term) VALUES ($1, $2) RETURNING *',
+      [resolvedClient, term.trim()]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    handleDbError(res, err, 'That watch term already exists for this client');
+  }
+});
+
+app.patch('/api/alert-rules/:id', async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid rule id' });
+  const { enabled } = req.body || {};
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled must be true or false' });
+  }
+  try {
+    const result = await query(
+      'UPDATE alert_rules SET enabled = $1 WHERE id = $2 RETURNING *',
+      [enabled, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Rule not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
+app.delete('/api/alert-rules/:id', async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid rule id' });
+  try {
+    await query('DELETE FROM alert_rules WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
+// Manual trigger for a priority-alert scan (fetches, then scans new articles).
+app.post('/api/trigger-alerts', expensiveLimiter, async (req, res) => {
+  const result = await triggerAlertsNow();
+  if (result.error && !result.perClient) console.error('Alert scan error:', result.error);
+  res.json(result);
+});
+
 // Articles
 // Builds SQL conditions from feedId/categoryId query params ("none" = no category).
 // Returns null if a param is present but not numeric, so handlers can 400 instead
@@ -525,15 +617,33 @@ app.post('/api/trigger-digest', expensiveLimiter, async (req, res) => {
   res.json(result);
 });
 
-// Fetch feeds manually
-app.post('/api/fetch-feeds', expensiveLimiter, async (req, res) => {
+// Fetch feeds manually. With no body → fetch all (the "Fetch Now" button). With
+// { feedIds: [...] } → pull only those feeds (the sidebar "Pull selected" action).
+app.post('/api/fetch-feeds', selectionLimiter, async (req, res) => {
+  let feedIds = null;
+  if (req.body && req.body.feedIds !== undefined) {
+    feedIds = parseFeedIds(req.body.feedIds);
+    if (!feedIds) return res.status(400).json({ error: 'feedIds must be an array of numeric feed ids' });
+  }
   try {
-    const stats = await fetchFeeds();
-    res.json({ success: true, ...(stats || {}) });
+    const stats = await fetchFeeds(feedIds && feedIds.length ? feedIds : null);
+    res.json({ success: true, feeds: feedIds ? feedIds.length : 'all', ...(stats || {}) });
   } catch (err) {
     console.error('Fetch feeds error:', err);
     res.status(500).json({ error: 'Feed fetch failed - check server logs' });
   }
+});
+
+// Email just the unread articles surfaced by a chosen set of feeds, grouped per
+// client. The sidebar "Email selected" action.
+app.post('/api/send-selection', selectionLimiter, async (req, res) => {
+  const feedIds = parseFeedIds(req.body && req.body.feedIds);
+  if (!feedIds || feedIds.length === 0) {
+    return res.status(400).json({ error: 'Select at least one feed to email' });
+  }
+  const result = await sendSelectionNow(feedIds);
+  if (result.error && !result.perClient) console.error('Send-selection error:', result.error);
+  res.json(result);
 });
 
 app.listen(PORT, () => {

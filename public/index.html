@@ -101,6 +101,37 @@
     }
     .nav-item .feed-health { margin-left: 4px; }
 
+    /* Per-feed selection: checkbox on the left, bulk pull/email action bar */
+    /* Explicit box: the global `input { width:100% }` rule would otherwise make
+       these tick-boxes fill the row and collapse the feed title to zero width. */
+    .sel-check {
+      width: 16px;
+      min-width: 16px;
+      height: 16px;
+      padding: 0;
+      margin: 0 2px 0 0;
+      cursor: pointer;
+      accent-color: var(--accent);
+      flex: 0 0 16px;
+    }
+    .selection-bar {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      background: #ece7f3;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+    }
+    .selection-bar.show { display: flex; }
+    .selection-bar .sel-count { font-size: 13px; font-weight: 600; color: var(--accent); margin-right: auto; }
+    .selection-bar button { padding: 5px 10px; font-size: 12px; }
+    .selection-bar .link-btn {
+      background: none; border: none; color: #777; cursor: pointer; font-size: 12px; text-decoration: underline; padding: 4px;
+    }
+
     .container {
       max-width: 1200px;
       margin: 0 auto;
@@ -436,6 +467,7 @@
         <button class="secondary-btn" onclick="triggerDigest()">Send Digest</button>
         <button class="secondary-btn" onclick="markAllRead()">Mark All Read</button>
         <button class="secondary-btn" onclick="openClientsModal()">Clients</button>
+        <button class="secondary-btn" onclick="openAlertsModal()">⚠ Alerts</button>
         <button class="secondary-btn" onclick="logout()">Sign Out</button>
       </div>
     </div>
@@ -445,6 +477,7 @@
     <div class="main">
       <aside class="sidebar">
         <h2>Feeds</h2>
+        <div id="selectionBar" class="selection-bar"></div>
         <div id="feedsList"></div>
         <hr style="margin: 20px 0; border: none; border-top: 1px solid #ecf0f1;">
         <h2>Manage</h2>
@@ -519,6 +552,35 @@
         <input type="email" id="newClientEmail" placeholder="Digest email (optional)">
       </div>
       <button onclick="addClient()" style="width: 100%;">Add Client</button>
+    </div>
+  </div>
+
+  <!-- Alerts Modal: manage per-client priority watch terms -->
+  <div id="alertsModal" class="modal">
+    <div class="modal-content">
+      <span class="close-modal" onclick="closeAlertsModal()">&times;</span>
+      <h2>⚠ Priority Alerts</h2>
+      <p style="font-size:13px;color:#777;margin-bottom:14px;">
+        When a newly-fetched story's headline or summary contains one of these terms,
+        the client gets an <strong>immediate</strong> email — separate from the daily digest.
+        Matching is a plain case-insensitive phrase (not a Boolean query). Scans run every 30 minutes.
+      </p>
+      <div class="form-group">
+        <label>Client</label>
+        <select id="alertClient" onchange="renderAlertRules()"></select>
+      </div>
+      <div id="alertRulesList"></div>
+      <hr style="border:none;border-top:1px solid #ecf0f1;margin:18px 0;">
+      <div class="form-group">
+        <label>Add a watch term</label>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="newAlertTerm" placeholder="e.g., administration, takeover, grounding" style="flex:1;"
+                 onkeydown="if(event.key==='Enter')addAlertRule()">
+          <button onclick="addAlertRule()">Add</button>
+        </div>
+      </div>
+      <hr style="border:none;border-top:1px solid #ecf0f1;margin:18px 0;">
+      <button class="secondary-btn" onclick="triggerAlerts()" style="width:100%;">Run a scan now (test)</button>
     </div>
   </div>
 
@@ -722,8 +784,13 @@
       const visible = currentClientId == null ? feeds : feeds.filter(f => f.client_id === currentClientId);
       const scopeUnread = visible.reduce((s, f) => s + (f.unread_count || 0), 0);
       const failing = visible.filter(f => f.last_error).length;
+      const allIds = visible.map(f => f.id);
+      const allChecked = allIds.length > 0 && allIds.every(id => selectedFeeds.has(id));
       html += `
         <div class="nav-item ${currentFilter.type === 'all' ? 'active' : ''}" onclick="setFilter('all', null)">
+          <input type="checkbox" class="sel-check" ${allChecked ? 'checked' : ''}
+                 title="Select all feeds in view"
+                 onclick="event.stopPropagation(); toggleGroupSelect([${allIds.join(',')}], this.checked)">
           <span class="title">${currentClientId == null ? 'All feeds' : 'All in ' + esc(clientName(currentClientId))}</span>
           ${unreadBadge(scopeUnread)}
           ${failing ? `<span class="feed-health" title="${failing} feed(s) currently failing to fetch">⚠ ${failing}</span>` : ''}
@@ -765,8 +832,13 @@
           `<span class="digest-toggle ${state}"
                  title="${state==='on'?'All feeds emailed — click to make the whole topic reader-only':state==='off'?'Whole topic reader-only — click to email all its feeds':'Some feeds emailed — click to email all'}"
                  onclick="event.stopPropagation(); toggleCategoryDigest(${g.catId}, ${target})">${label}</span>`;
+        const gIds = g.feeds.map(f => f.id);
+        const gChecked = gIds.length > 0 && gIds.every(id => selectedFeeds.has(id));
         html += `
           <div class="nav-item category ${catActive ? 'active' : ''}" onclick="setFilter('category', ${g.catId})">
+            <input type="checkbox" class="sel-check" ${gChecked ? 'checked' : ''}
+                   title="Select every feed in this topic"
+                   onclick="event.stopPropagation(); toggleGroupSelect([${gIds.join(',')}], this.checked)">
             <span class="title">${esc(g.cat || 'Uncategorized')}</span>
             ${pill}
           </div>`;
@@ -774,6 +846,9 @@
           const fOn = f.in_digest !== false;
           html += `
             <div class="nav-item feed ${currentFilter.type === 'feed' && currentFilter.id === f.id ? 'active' : ''}" onclick="setFilter('feed', ${f.id})">
+              <input type="checkbox" class="sel-check" ${selectedFeeds.has(f.id) ? 'checked' : ''}
+                     title="Select this feed"
+                     onclick="event.stopPropagation(); toggleFeedSelect(${f.id}, this.checked)">
               <span class="title" title="${esc(f.title || f.url)}">${esc(f.title || f.url)}</span>
               ${f.last_error ? `<span class="feed-health" title="Failing${f.error_count > 1 ? ' ×' + f.error_count : ''}: ${esc(f.last_error)}">⚠</span>` : ''}
               ${unreadBadge(f.unread_count)}
@@ -786,6 +861,73 @@
       }
 
       list.innerHTML = html;
+      renderSelectionBar();
+    }
+
+    // --- Per-feed selection (pull / email specific feeds) ---
+    let selectedFeeds = new Set();
+
+    function toggleFeedSelect(id, checked) {
+      if (checked) selectedFeeds.add(id); else selectedFeeds.delete(id);
+      renderFeeds();
+    }
+    function toggleGroupSelect(ids, checked) {
+      for (const id of ids) { if (checked) selectedFeeds.add(id); else selectedFeeds.delete(id); }
+      renderFeeds();
+    }
+    function clearSelection() {
+      selectedFeeds.clear();
+      renderFeeds();
+    }
+
+    function renderSelectionBar() {
+      const bar = document.getElementById('selectionBar');
+      if (!bar) return;
+      const n = selectedFeeds.size;
+      if (!n) { bar.className = 'selection-bar'; bar.innerHTML = ''; return; }
+      bar.className = 'selection-bar show';
+      bar.innerHTML = `
+        <span class="sel-count">${n} feed${n === 1 ? '' : 's'} selected</span>
+        <button onclick="pullSelected()" title="Fetch just these feeds now">Pull selected</button>
+        <button onclick="emailSelected()" title="Email the unread stories from just these feeds">Email selected</button>
+        <button class="link-btn" onclick="clearSelection()">Clear</button>`;
+    }
+
+    async function pullSelected() {
+      const feedIds = [...selectedFeeds];
+      if (!feedIds.length) return;
+      const res = await api('/api/fetch-feeds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feedIds })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(data.error || 'Pull failed'); return; }
+      await refresh();
+      const bits = [];
+      if (data.inserted != null) bits.push(`${data.inserted} new`);
+      if (data.deduped != null) bits.push(`${data.deduped} duplicates`);
+      if (data.failed) bits.push(`${data.failed} feed error(s)`);
+      alert(`Pulled ${feedIds.length} feed(s)` + (bits.length ? ` — ${bits.join(', ')}.` : '.'));
+    }
+
+    async function emailSelected() {
+      const feedIds = [...selectedFeeds];
+      if (!feedIds.length) return;
+      const res = await api('/api/send-selection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feedIds })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(data.error || 'Could not send'); return; }
+      const errs = data.errors || [];
+      if (errs.length) { alert('Could not email selection:\n' + errs.join('\n') + '\n\nArticles were NOT marked read, so they\'ll retry.'); return; }
+      if (data.success === false) { alert('Error: ' + (data.error || 'unknown')); return; }
+      if (!data.articleCount) { alert('Nothing to email — the selected feeds have no unread stories.'); return; }
+      const per = (data.perClient || []).filter(p => p.sent).map(p => `${p.client}: ${p.sent}`).join(', ');
+      await refresh();
+      alert(`Emailed ${data.articleCount} story(ies) across ${data.clients} client(s)` + (per ? `\n${per}` : ''));
     }
 
     function clientName(id) {
@@ -993,13 +1135,100 @@
       renderClientsList();
     }
 
-    // Fills the client dropdowns in the Add Feed / Add Topic modals.
+    // --- Priority alerts management ---
+    let alertRules = [];
+
+    function openAlertsModal() {
+      const sel = document.getElementById('alertClient');
+      if (currentClientId != null) sel.value = String(currentClientId);
+      loadAlertRules();
+      document.getElementById('alertsModal').classList.add('open');
+    }
+    function closeAlertsModal() {
+      document.getElementById('alertsModal').classList.remove('open');
+      document.getElementById('newAlertTerm').value = '';
+    }
+    window.openAlertsModal = openAlertsModal;
+
+    async function loadAlertRules() {
+      const res = await api('/api/alert-rules');
+      alertRules = res.ok ? await res.json() : [];
+      renderAlertRules();
+    }
+
+    function selectedAlertClientId() {
+      const v = parseInt(document.getElementById('alertClient')?.value, 10);
+      return Number.isFinite(v) ? v : (clients[0] && clients[0].id);
+    }
+
+    function renderAlertRules() {
+      const el = document.getElementById('alertRulesList');
+      if (!el) return;
+      const cid = selectedAlertClientId();
+      const mine = alertRules.filter(r => r.client_id === cid);
+      if (!mine.length) {
+        el.innerHTML = '<p style="color:#777;font-size:13px;">No watch terms yet for this client. Add high-stakes phrases below.</p>';
+        return;
+      }
+      el.innerHTML = mine.map(r => `
+        <div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f2f2f2;">
+          <span style="flex:1;font-weight:600;${r.enabled ? '' : 'color:#aaa;text-decoration:line-through;'}">${esc(r.term)}</span>
+          <label style="font-size:12px;color:#777;display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleAlertRule(${r.id}, this.checked)"> on
+          </label>
+          <button class="secondary-btn" onclick="deleteAlertRule(${r.id})" title="Remove" style="padding:2px 8px;">&times;</button>
+        </div>`).join('');
+    }
+
+    async function addAlertRule() {
+      const input = document.getElementById('newAlertTerm');
+      const term = input.value.trim();
+      if (!term) { alert('Enter a watch term'); return; }
+      const clientId = selectedAlertClientId();
+      const res = await api('/api/alert-rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ term, clientId })
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || 'Could not add term'); return; }
+      input.value = '';
+      await loadAlertRules();
+    }
+
+    async function toggleAlertRule(id, enabled) {
+      await api('/api/alert-rules/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      await loadAlertRules();
+    }
+
+    async function deleteAlertRule(id) {
+      await api('/api/alert-rules/' + id, { method: 'DELETE' });
+      await loadAlertRules();
+    }
+
+    async function triggerAlerts() {
+      const res = await api('/api/trigger-alerts', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      const errs = data.errors || [];
+      if (errs.length) { alert('Alert scan issues:\n' + errs.join('\n')); return; }
+      if (data.success === false) { alert('Error: ' + (data.error || 'unknown')); return; }
+      alert(data.alerted
+        ? `Priority alert sent — ${data.alerted} story(ies) flagged across ${data.clients} client(s).`
+        : 'Scan ran — no new stories matched a watch term.');
+    }
+
+    // Fills the client dropdowns in the Add Feed / Add Topic / Alerts modals.
     function populateClientSelects() {
       const opts = clients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
       const fc = document.getElementById('feedClient');
       const cc = document.getElementById('categoryClient');
+      const ac = document.getElementById('alertClient');
       if (fc) { const prev = fc.value; fc.innerHTML = opts; if (prev) fc.value = prev; }
       if (cc) { const prev = cc.value; cc.innerHTML = opts; if (prev) cc.value = prev; }
+      if (ac) { const prev = ac.value; ac.innerHTML = opts; if (prev) ac.value = prev; }
       updateCategorySelect();
     }
 
