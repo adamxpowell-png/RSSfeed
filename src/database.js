@@ -88,6 +88,12 @@ export async function initDatabase() {
       -- reader always shows the feed; in_digest=false means "browse only, never
       -- email". The topic pill is a bulk setter over these. Default true.
       ALTER TABLE feeds ADD COLUMN IF NOT EXISTS in_digest BOOLEAN DEFAULT TRUE;
+
+      -- Feed health: last_error is the most recent fetch failure (NULL = healthy),
+      -- error_count the consecutive-failure streak (reset to 0 on any good fetch).
+      -- Surfaces silently-broken sources so they don't create invisible gaps.
+      ALTER TABLE feeds ADD COLUMN IF NOT EXISTS last_error TEXT;
+      ALTER TABLE feeds ADD COLUMN IF NOT EXISTS error_count INTEGER DEFAULT 0;
       CREATE INDEX IF NOT EXISTS idx_feeds_client ON feeds(client_id);
       CREATE INDEX IF NOT EXISTS idx_categories_client ON categories(client_id);
 

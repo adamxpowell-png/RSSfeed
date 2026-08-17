@@ -41,11 +41,19 @@ async function doFetchFeeds() {
         else if (outcome === 'deduped') stats.deduped += 1;
       }
 
-      await query('UPDATE feeds SET last_fetched = NOW() WHERE id = $1', [feed.id]);
+      await query(
+        'UPDATE feeds SET last_fetched = NOW(), last_error = NULL, error_count = 0 WHERE id = $1',
+        [feed.id]
+      );
       console.log(`Fetched: ${feed.title}`);
     } catch (err) {
       stats.failed += 1;
       console.error(`Error fetching ${feed.url}:`, err.message);
+      // Record the failure so a silently-broken feed becomes visible in the UI.
+      await query(
+        'UPDATE feeds SET last_error = $2, error_count = error_count + 1 WHERE id = $1',
+        [feed.id, String(err.message || 'fetch failed').slice(0, 500)]
+      );
     }
   }
 

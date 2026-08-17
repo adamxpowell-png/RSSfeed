@@ -85,6 +85,17 @@ if (!TEST_DB) {
     assert.equal((await ff.getUnreadArticles(syos)).length, 0, 'excluded once every carrying feed is reader-only');
   });
 
+  test('feed health: a failing fetch is recorded on the feed', async () => {
+    await reset();
+    const syos = await clientId('SYOS');
+    const c = await addCat('t', syos);
+    const bad = await addFeed('http://127.0.0.1:1/nope', syos, c); // refused connection
+    await ff.fetchFeeds();
+    const row = (await db.query('SELECT last_error, error_count FROM feeds WHERE id=$1', [bad.id])).rows[0];
+    assert.ok(row.last_error, 'the fetch failure is recorded');
+    assert.equal(row.error_count, 1, 'consecutive-failure count incremented');
+  });
+
   test('per-feed digest control: a single feed can be excluded / cherry-picked', async () => {
     await reset();
     const syos = await clientId('SYOS');

@@ -92,6 +92,14 @@
       font-size: 11px;
     }
     .nav-item.feed .remove { margin-left: 6px; }
+    /* Feed health warning (broken fetch) */
+    .feed-health {
+      color: #c0392b;
+      font-size: 11px;
+      cursor: help;
+      white-space: nowrap;
+    }
+    .nav-item .feed-health { margin-left: 4px; }
 
     .container {
       max-width: 1200px;
@@ -713,10 +721,12 @@
       // Feeds in scope
       const visible = currentClientId == null ? feeds : feeds.filter(f => f.client_id === currentClientId);
       const scopeUnread = visible.reduce((s, f) => s + (f.unread_count || 0), 0);
+      const failing = visible.filter(f => f.last_error).length;
       html += `
         <div class="nav-item ${currentFilter.type === 'all' ? 'active' : ''}" onclick="setFilter('all', null)">
           <span class="title">${currentClientId == null ? 'All feeds' : 'All in ' + esc(clientName(currentClientId))}</span>
           ${unreadBadge(scopeUnread)}
+          ${failing ? `<span class="feed-health" title="${failing} feed(s) currently failing to fetch">⚠ ${failing}</span>` : ''}
         </div>`;
 
       if (visible.length === 0) {
@@ -765,6 +775,7 @@
           html += `
             <div class="nav-item feed ${currentFilter.type === 'feed' && currentFilter.id === f.id ? 'active' : ''}" onclick="setFilter('feed', ${f.id})">
               <span class="title" title="${esc(f.title || f.url)}">${esc(f.title || f.url)}</span>
+              ${f.last_error ? `<span class="feed-health" title="Failing${f.error_count > 1 ? ' ×' + f.error_count : ''}: ${esc(f.last_error)}">⚠</span>` : ''}
               ${unreadBadge(f.unread_count)}
               <span class="digest-toggle feed-toggle ${fOn ? 'on' : 'off'}"
                     title="${fOn ? 'Emailed — click to exclude just this feed from the digest' : 'Excluded from digest — click to include'}"
