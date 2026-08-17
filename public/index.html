@@ -889,7 +889,7 @@
       bar.innerHTML = `
         <span class="sel-count">${n} feed${n === 1 ? '' : 's'} selected</span>
         <button onclick="pullSelected()" title="Fetch just these feeds now">Pull selected</button>
-        <button onclick="emailSelected()" title="Email the unread stories from just these feeds">Email selected</button>
+        <button onclick="emailSelected()" title="Email a copy of the unread stories from just these feeds (leaves them unread)">Email selected</button>
         <button class="link-btn" onclick="clearSelection()">Clear</button>`;
     }
 
@@ -927,7 +927,8 @@
       if (!data.articleCount) { alert('Nothing to email — the selected feeds have no unread stories.'); return; }
       const per = (data.perClient || []).filter(p => p.sent).map(p => `${p.client}: ${p.sent}`).join(', ');
       await refresh();
-      alert(`Emailed ${data.articleCount} story(ies) across ${data.clients} client(s)` + (per ? `\n${per}` : ''));
+      alert(`Emailed ${data.articleCount} story(ies) across ${data.clients} client(s)` + (per ? `\n${per}` : '') +
+        `\n\nLeft unread — they stay in the reader and the daily digest.`);
     }
 
     function clientName(id) {

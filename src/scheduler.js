@@ -107,10 +107,13 @@ export async function triggerAlertsNow() {
 
 // On-demand email of the unread articles surfaced by a chosen set of feeds
 // (the sidebar "Email selected" action). Grouped per client so each client's
-// picks go to its own recipient, in the same format as the daily digest. Marks
-// those articles read ONLY on a confirmed send, so a rejected send is retried and
-// nothing is silently lost — same contract as runDigests().
-export async function sendSelectionNow(feedIds) {
+// picks go to its own recipient, in the same format as the daily digest.
+// NON-DESTRUCTIVE: unlike the daily digest, this does NOT mark the articles read
+// — a manual "email me a copy of these" must not change reader/digest state, so
+// the same stories still appear in the reader and the next daily digest.
+// opts.send is injectable for tests; defaults to the real digest email.
+export async function sendSelectionNow(feedIds, opts = {}) {
+  const send = opts.send || sendDailyDigest;
   try {
     const articles = await getUnreadForSelection(feedIds);
     if (!articles.length) return { success: true, articleCount: 0, clients: 0, perClient: [] };
@@ -133,9 +136,8 @@ export async function sendSelectionNow(feedIds) {
         errors.push(`${g.name}: no recipient`);
         continue;
       }
-      const r = await sendDailyDigest(g.articles, { to: g.recipient, label: g.name });
+      const r = await send(g.articles, { to: g.recipient, label: g.name });
       if (r.ok) {
-        await markArticlesAsRead(g.articles.map((a) => a.id));
         total += g.articles.length;
         perClient.push({ client: g.name, sent: g.articles.length });
       } else {

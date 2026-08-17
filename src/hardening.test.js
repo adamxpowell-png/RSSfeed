@@ -18,6 +18,7 @@ if (!TEST_DB) {
   const db = await import('./database.js');
   const ff = await import('./feedFetcher.js');
   const al = await import('./alertService.js');
+  const sch = await import('./scheduler.js');
 
   // Fake email sender: records what would have been sent, always "ok" so the
   // ledger records, so alert tests never touch Resend.
@@ -193,6 +194,23 @@ if (!TEST_DB) {
     const rows = await ff.getUnreadForSelection([fPick.id]);
     const titles = rows.map((r) => r.title).sort();
     assert.deepEqual(titles, ['Pick-only story', 'Shared story'], 'includes carried + own, excludes other-only');
+  });
+
+  test('email-selection is non-destructive: a successful send leaves the stories unread', async () => {
+    await reset();
+    const syos = await clientId('SYOS');
+    const c = await addCat('t', syos);
+    const f = await addFeed('http://a', syos, c);
+    await ff.storeArticle(f, { link: 'http://x/1', title: 'Story one' });
+    await ff.storeArticle(f, { link: 'http://x/2', title: 'Story two' });
+
+    const sent = [];
+    const send = async (articles, opts) => { sent.push({ articles, opts }); return { ok: true, sent: articles.length }; };
+    const r = await sch.sendSelectionNow([f.id], { send });
+    assert.equal(r.articleCount, 2, 'both stories emailed');
+    assert.equal(sent.length, 1, 'one client email');
+    // The whole point: they must still be unread afterwards.
+    assert.equal((await ff.getUnreadForSelection([f.id])).length, 2, 'stories remain unread after emailing');
   });
 
   test('per-feed digest control: a single feed can be excluded / cherry-picked', async () => {
