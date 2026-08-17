@@ -16,6 +16,16 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Backstop: never let a single stray async error take the whole reader down.
+// Handlers still use try/catch; this only stops an unforeseen unhandled
+// rejection / exception from terminating the process (Node 22 exits by default).
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled promise rejection (kept alive):', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (kept alive):', err);
+});
+
 // READER_PASSWORD accepted as fallback so the existing Railway variable keeps working
 const APP_PASSWORD = process.env.APP_PASSWORD || process.env.READER_PASSWORD || '';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -213,12 +223,20 @@ async function defaultClientId() {
   return r.rows[0] ? r.rows[0].id : null;
 }
 
+// True only for a plain integer within Postgres int4 range. Guards against
+// all-digit values that pass /^\d+$/ but overflow int4 — feeding one straight
+// to pg throws, and if that throw is awaited outside a try/catch it becomes an
+// unhandled rejection that takes the process down.
+function isPgInt(raw) {
+  return /^\d+$/.test(String(raw)) && Number(raw) <= 2147483647;
+}
+
 // Returns a valid client id for a request-supplied value: the default when
-// absent, or null when the value is non-numeric or names no existing client
-// (so the handler can 400 rather than write an orphan row).
+// absent, or null when the value is invalid or names no existing client
+// (so the handler can 400 rather than write an orphan row or crash).
 async function resolveClientId(raw) {
   if (raw === undefined || raw === null || raw === '') return await defaultClientId();
-  if (!/^\d+$/.test(String(raw))) return null;
+  if (!isPgInt(raw)) return null;
   const r = await query('SELECT id FROM clients WHERE id = $1', [raw]);
   return r.rows[0] ? r.rows[0].id : null;
 }
@@ -345,10 +363,19 @@ app.post('/api/feeds', async (req, res) => {
   }
   const resolvedClient = await resolveClientId(clientId);
   if (!resolvedClient) return res.status(400).json({ error: 'Valid clientId is required' });
+  // Validate categoryId if given: numeric, in range, and belonging to this
+  // client (so a feed can't be filed under another client's topic).
+  let resolvedCategory = null;
+  if (categoryId !== undefined && categoryId !== null && categoryId !== '') {
+    if (!isPgInt(categoryId)) return res.status(400).json({ error: 'categoryId must be numeric' });
+    const cat = await query('SELECT id FROM categories WHERE id = $1 AND client_id = $2', [categoryId, resolvedClient]);
+    if (!cat.rows.length) return res.status(400).json({ error: 'categoryId must belong to the selected client' });
+    resolvedCategory = cat.rows[0].id;
+  }
   try {
     const result = await query(
       'INSERT INTO feeds (url, title, category_id, client_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [url, title || url, categoryId || null, resolvedClient]
+      [url, title || url, resolvedCategory, resolvedClient]
     );
     res.json(result.rows[0]);
   } catch (err) {

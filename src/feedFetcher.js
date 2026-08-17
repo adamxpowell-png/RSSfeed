@@ -27,7 +27,7 @@ export async function fetchFeeds() {
 }
 
 async function doFetchFeeds() {
-  const result = await query('SELECT id, url, title FROM feeds');
+  const result = await query('SELECT id, url, title, client_id FROM feeds');
   const feeds = result.rows;
   const stats = { inserted: 0, deduped: 0, failed: 0 };
 
@@ -56,24 +56,31 @@ async function doFetchFeeds() {
 }
 
 // Stores one item, collapsing it onto an existing article when the same story
-// has already arrived through another feed. Returns 'inserted' or 'deduped'.
-async function storeArticle(feed, item) {
+// has already arrived through another feed OF THE SAME CLIENT. Returns
+// 'inserted' or 'deduped'. Exported for the regression suite.
+export async function storeArticle(feed, item) {
   const url = item.link || '';
   const title = item.title || 'Untitled';
   const published = item.pubDate ? new Date(item.pubDate) : new Date();
   const description = item.contentSnippet || item.description || '';
   const { urlKey, titleKey } = dedupeKeys({ url, title });
 
+  // De-dup is scoped to the incoming feed's CLIENT. A story shared across
+  // clients is stored once per client, so each client's digest and read-state
+  // stay independent — one client sending a shared story can't mark it read for
+  // (and thereby hide it from) another client that also monitors it.
   const existing = await query(
-    `SELECT id FROM articles
-      WHERE published_at > NOW() - ($1 || ' days')::interval
+    `SELECT a.id FROM articles a
+       JOIN feeds f ON a.feed_id = f.id
+      WHERE f.client_id IS NOT DISTINCT FROM $4
+        AND a.published_at > NOW() - ($1 || ' days')::interval
         AND (
-          (url_key IS NOT NULL AND url_key = $2)
-          OR (title_key IS NOT NULL AND title_key = $3)
+          (a.url_key IS NOT NULL AND a.url_key = $2)
+          OR (a.title_key IS NOT NULL AND a.title_key = $3)
         )
-      ORDER BY id ASC
+      ORDER BY a.id ASC
       LIMIT 1`,
-    [String(DEDUPE_WINDOW_DAYS), urlKey, titleKey]
+    [String(DEDUPE_WINDOW_DAYS), urlKey, titleKey, feed.client_id ?? null]
   );
 
   if (existing.rows.length) {
@@ -155,7 +162,14 @@ export async function getUnreadArticles(clientId = null) {
     JOIN feeds f ON a.feed_id = f.id
     LEFT JOIN categories c ON f.category_id = c.id
     WHERE a.read = FALSE${clientWhere}
-      AND f.in_digest IS NOT FALSE
+      -- In the digest if ANY feed that carried the story is in_digest — not just
+      -- the single owning feed. Stops a story deduped onto a context feed from
+      -- being dropped when an in-digest mention feed also matched it.
+      AND EXISTS (
+        SELECT 1 FROM article_feed_hits h
+        JOIN feeds hf ON hf.id = h.feed_id
+        WHERE h.article_id = a.id AND hf.in_digest IS NOT FALSE
+      )
     ORDER BY c.name, a.published_at DESC
   `, params);
   return result.rows;
