@@ -80,8 +80,18 @@
     }
     .digest-toggle.on { background: var(--accent); color: #fff; }
     .digest-toggle.off { background: #e6e2ee; color: #777; }
+    .digest-toggle.mixed { background: #b9aede; color: #fff; }
     .digest-toggle:hover { border-color: var(--accent); }
     .nav-item.category.active .digest-toggle.on { background: #fff; color: var(--accent); }
+    /* Per-feed toggle: compact circular ✉ / — sits before the remove button */
+    .digest-toggle.feed-toggle {
+      margin-left: auto;
+      min-width: 20px;
+      text-align: center;
+      padding: 1px 6px;
+      font-size: 11px;
+    }
+    .nav-item.feed .remove { margin-left: 6px; }
 
     .container {
       max-width: 1200px;
@@ -656,9 +666,19 @@
       loadArticles();
     }
 
-    // Toggle whether a topic feeds the email digest. Reader view is unaffected.
-    async function toggleDigest(catId, val) {
+    // Topic-level bulk: sets every feed in the topic in/out of the digest.
+    async function toggleCategoryDigest(catId, val) {
       await api('/api/categories/' + catId, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ in_digest: val })
+      });
+      loadFeeds();
+    }
+
+    // Per-feed: include/exclude a single feed from the digest (reader unaffected).
+    async function toggleFeedDigest(feedId, val) {
+      await api('/api/feeds/' + feedId, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ in_digest: val })
@@ -705,38 +725,53 @@
         return;
       }
 
-      // Order: client -> topic -> feed. When a single client is selected we skip
-      // the repeated client header (the switcher already shows it).
+      // Group visible feeds: client -> topic, preserving the server's ordering.
+      const groups = [];
+      for (const f of visible) {
+        const catId = f.category_id || null;
+        let g = groups[groups.length - 1];
+        if (!g || g.clientId !== f.client_id || g.catId !== catId) {
+          g = { clientId: f.client_id, client: f.client, catId, cat: f.category, feeds: [] };
+          groups.push(g);
+        }
+        g.feeds.push(f);
+      }
+
       const showClientHeaders = currentClientId == null;
       let lastClient = undefined;
-      let lastCat = undefined;
-      for (const f of visible) {
-        if (showClientHeaders && f.client_id !== lastClient) {
-          lastClient = f.client_id;
-          lastCat = undefined;
-          html += `<div class="client-group"><span>${esc(f.client || 'Unassigned')}</span></div>`;
+      for (const g of groups) {
+        if (showClientHeaders && g.clientId !== lastClient) {
+          lastClient = g.clientId;
+          html += `<div class="client-group"><span>${esc(g.client || 'Unassigned')}</span></div>`;
         }
-        const catId = f.category_id || null;
-        if (catId !== lastCat) {
-          lastCat = catId;
-          const catActive = currentFilter.type === 'category' && currentFilter.id === catId;
-          const inDigest = f.category_in_digest !== false; // null (uncategorised) counts as in-digest
-          const toggle = catId == null ? '' :
-            `<span class="digest-toggle ${inDigest ? 'on' : 'off'}"
-                   title="${inDigest ? 'In email digest — click to make reader-only' : 'Reader-only — click to add to the email digest'}"
-                   onclick="event.stopPropagation(); toggleDigest(${catId}, ${!inDigest})">${inDigest ? '✉ digest' : 'context'}</span>`;
+        // Topic header pill reflects its feeds: all in digest / none / mixed.
+        // Clicking bulk-sets every feed in the topic.
+        const on = g.feeds.filter(f => f.in_digest !== false).length;
+        const state = on === g.feeds.length ? 'on' : on === 0 ? 'off' : 'mixed';
+        const label = state === 'on' ? '✉ digest' : state === 'off' ? 'context' : '✉ some';
+        const target = state === 'on' ? false : true;
+        const catActive = currentFilter.type === 'category' && currentFilter.id === g.catId;
+        const pill = g.catId == null ? '' :
+          `<span class="digest-toggle ${state}"
+                 title="${state==='on'?'All feeds emailed — click to make the whole topic reader-only':state==='off'?'Whole topic reader-only — click to email all its feeds':'Some feeds emailed — click to email all'}"
+                 onclick="event.stopPropagation(); toggleCategoryDigest(${g.catId}, ${target})">${label}</span>`;
+        html += `
+          <div class="nav-item category ${catActive ? 'active' : ''}" onclick="setFilter('category', ${g.catId})">
+            <span class="title">${esc(g.cat || 'Uncategorized')}</span>
+            ${pill}
+          </div>`;
+        for (const f of g.feeds) {
+          const fOn = f.in_digest !== false;
           html += `
-            <div class="nav-item category ${catActive ? 'active' : ''}" onclick="setFilter('category', ${catId})">
-              <span class="title">${esc(f.category || 'Uncategorized')}</span>
-              ${toggle}
+            <div class="nav-item feed ${currentFilter.type === 'feed' && currentFilter.id === f.id ? 'active' : ''}" onclick="setFilter('feed', ${f.id})">
+              <span class="title" title="${esc(f.title || f.url)}">${esc(f.title || f.url)}</span>
+              ${unreadBadge(f.unread_count)}
+              <span class="digest-toggle feed-toggle ${fOn ? 'on' : 'off'}"
+                    title="${fOn ? 'Emailed — click to exclude just this feed from the digest' : 'Excluded from digest — click to include'}"
+                    onclick="event.stopPropagation(); toggleFeedDigest(${f.id}, ${!fOn})">${fOn ? '✉' : '—'}</span>
+              <button class="remove" onclick="event.stopPropagation(); removeFeed(${f.id})" title="Remove feed">&times;</button>
             </div>`;
         }
-        html += `
-          <div class="nav-item feed ${currentFilter.type === 'feed' && currentFilter.id === f.id ? 'active' : ''}" onclick="setFilter('feed', ${f.id})">
-            <span class="title" title="${esc(f.title || f.url)}">${esc(f.title || f.url)}</span>
-            ${unreadBadge(f.unread_count)}
-            <button class="remove" onclick="event.stopPropagation(); removeFeed(${f.id})" title="Remove feed">&times;</button>
-          </div>`;
       }
 
       list.innerHTML = html;

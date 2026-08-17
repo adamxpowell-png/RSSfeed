@@ -312,7 +312,8 @@ app.get('/api/categories', async (req, res) => {
   }
 });
 
-// Toggle whether a topic feeds the emailed digest (reader is unaffected).
+// Topic toggle = bulk setter: set the topic's flag AND every feed under it, so
+// one click moves a whole topic in/out while per-feed flags remain the truth.
 app.patch('/api/categories/:id', async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid category id' });
   const { in_digest } = req.body || {};
@@ -325,6 +326,7 @@ app.patch('/api/categories/:id', async (req, res) => {
       [in_digest, req.params.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Category not found' });
+    await query('UPDATE feeds SET in_digest = $1 WHERE category_id = $2', [in_digest, req.params.id]);
     res.json(result.rows[0]);
   } catch (err) {
     handleDbError(res, err);
@@ -365,6 +367,25 @@ app.get('/api/feeds', async (req, res) => {
       ORDER BY cl.name, c.name, f.title
     `);
     res.json(result.rows);
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
+// Per-feed digest toggle — the source of truth for the emailed digest.
+app.patch('/api/feeds/:id', async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid feed id' });
+  const { in_digest } = req.body || {};
+  if (typeof in_digest !== 'boolean') {
+    return res.status(400).json({ error: 'in_digest must be true or false' });
+  }
+  try {
+    const result = await query(
+      'UPDATE feeds SET in_digest = $1 WHERE id = $2 RETURNING *',
+      [in_digest, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Feed not found' });
+    res.json(result.rows[0]);
   } catch (err) {
     handleDbError(res, err);
   }
