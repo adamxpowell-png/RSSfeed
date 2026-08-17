@@ -19,6 +19,7 @@ if (!TEST_DB) {
   const ff = await import('./feedFetcher.js');
   const al = await import('./alertService.js');
   const sch = await import('./scheduler.js');
+  const brief = await import('./briefService.js');
 
   // Fake email sender: records what would have been sent, always "ok" so the
   // ledger records, so alert tests never touch Resend.
@@ -211,6 +212,59 @@ if (!TEST_DB) {
     assert.equal(sent.length, 1, 'one client email');
     // The whole point: they must still be unread afterwards.
     assert.equal((await ff.getUnreadForSelection([f.id])).length, 2, 'stories remain unread after emailing');
+  });
+
+  test('brief coverage: filters by date range (inclusive end day) and scopes to the client', async () => {
+    await reset();
+    const syos = await clientId('SYOS'), nlng = await clientId('NLNG');
+    const cs = await addCat('t', syos), cn = await addCat('t', nlng);
+    const fs = await addFeed('http://s', syos, cs);
+    const fn = await addFeed('http://n', nlng, cn);
+    await ff.storeArticle(fs, { link: 'http://x/in1', title: 'In range early', pubDate: '2026-01-05T09:00:00Z' });
+    await ff.storeArticle(fs, { link: 'http://x/in2', title: 'In range end-day late', pubDate: '2026-01-10T23:30:00Z' });
+    await ff.storeArticle(fs, { link: 'http://x/before', title: 'Before range', pubDate: '2026-01-01T09:00:00Z' });
+    await ff.storeArticle(fs, { link: 'http://x/after', title: 'After range', pubDate: '2026-01-20T09:00:00Z' });
+    await ff.storeArticle(fn, { link: 'http://x/other', title: 'Other client in range', pubDate: '2026-01-06T09:00:00Z' });
+
+    const cov = await brief.getCoverage(syos, '2026-01-05', '2026-01-10');
+    const titles = cov.articles.map((a) => a.title).sort();
+    assert.deepEqual(titles, ['In range early', 'In range end-day late'],
+      'only SYOS stories within [from, to] inclusive of the end day');
+  });
+
+  test('brief coverage: a story shared across the client\'s feeds appears once, with a salience count', async () => {
+    await reset();
+    const syos = await clientId('SYOS');
+    const c = await addCat('t', syos);
+    const f1 = await addFeed('http://f1', syos, c);
+    const f2 = await addFeed('http://f2', syos, c);
+    // Dedup is anchored to NOW (21-day window), so use recent dates for this one.
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const today = new Date();
+    const yesterday = new Date(today.getTime() - 24 * 3600 * 1000);
+    const weekAgo = new Date(today.getTime() - 7 * 24 * 3600 * 1000);
+    const story = { link: 'http://wire/z', title: 'Shared story', pubDate: yesterday.toISOString() };
+    await ff.storeArticle(f1, story);
+    await ff.storeArticle(f2, story); // dedup → one row, two hits
+    const cov = await brief.getCoverage(syos, iso(weekAgo), iso(today));
+    assert.equal(cov.articles.length, 1, 'appears once in the brief');
+    assert.equal(cov.articles[0].hit_count, 2, 'seen-in count reflects both carrying feeds');
+  });
+
+  test('brief render: produces a Word-openable doc and a print page, escaping titles', async () => {
+    await reset();
+    const syos = await clientId('SYOS');
+    const c = await addCat('Defence', syos);
+    const f = await addFeed('http://s', syos, c);
+    await ff.storeArticle(f, { link: 'http://x/1', title: 'Deal <b>&</b> "talks"', pubDate: '2026-03-03T09:00:00Z' });
+    const cov = await brief.getCoverage(syos, '2026-03-01', '2026-03-05');
+    const web = brief.renderBrief(cov, { forWord: false });
+    const doc = brief.renderBrief(cov, { forWord: true });
+    assert.ok(web.includes('window.print()'), 'web page has a print control');
+    assert.ok(!doc.includes('window.print()'), 'word doc has no print control');
+    assert.ok(doc.includes('urn:schemas-microsoft-com:office:word'), 'word doc carries the office namespace');
+    assert.ok(web.includes('Deal &lt;b&gt;&amp;&lt;/b&gt; &quot;talks&quot;'), 'title is HTML-escaped');
+    assert.ok(brief.briefFilename('Project Odyssey', '2026-03-01', '2026-03-05').endsWith('.doc'));
   });
 
   test('per-feed digest control: a single feed can be excluded / cherry-picked', async () => {

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { initDatabase, query } from './database.js';
 import { startScheduler, triggerDigestNow, triggerAlertsNow, sendSelectionNow } from './scheduler.js';
 import { fetchFeeds, getUnreadArticles, backfillDedupeKeys } from './feedFetcher.js';
+import { getCoverage, renderBrief, isIsoDate, briefFilename } from './briefService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -517,6 +518,32 @@ app.post('/api/trigger-alerts', expensiveLimiter, async (req, res) => {
   const result = await triggerAlertsNow();
   if (result.error && !result.perClient) console.error('Alert scan error:', result.error);
   res.json(result);
+});
+
+// Export-to-brief: a client's coverage over a date range as a CSG-branded
+// document. format=html → print-ready page (Save-as-PDF); format=doc → an
+// editable Word download. Reached in a new tab; the auth cookie rides along.
+app.get('/api/brief', async (req, res) => {
+  const { clientId, from, to } = req.query;
+  const format = req.query.format === 'doc' ? 'doc' : 'html';
+  if (!isPgInt(clientId)) return res.status(400).send('Invalid clientId');
+  if (!isIsoDate(from) || !isIsoDate(to)) return res.status(400).send('from and to must be YYYY-MM-DD dates');
+  if (from > to) return res.status(400).send('from must be on or before to');
+  try {
+    const coverage = await getCoverage(Number(clientId), from, to);
+    if (!coverage) return res.status(404).send('Client not found');
+    const html = renderBrief(coverage, { forWord: format === 'doc' });
+    if (format === 'doc') {
+      res.setHeader('Content-Type', 'application/msword; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${briefFilename(coverage.client.name, from, to)}"`);
+    } else {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    }
+    res.send(html);
+  } catch (err) {
+    console.error('Brief error:', err);
+    res.status(500).send('Could not generate briefing - check server logs');
+  }
 });
 
 // Articles

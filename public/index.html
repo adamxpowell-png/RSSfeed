@@ -468,6 +468,7 @@
         <button class="secondary-btn" onclick="markAllRead()">Mark All Read</button>
         <button class="secondary-btn" onclick="openClientsModal()">Clients</button>
         <button class="secondary-btn" onclick="openAlertsModal()">⚠ Alerts</button>
+        <button class="secondary-btn" onclick="openBriefModal()">Brief</button>
         <button class="secondary-btn" onclick="logout()">Sign Out</button>
       </div>
     </div>
@@ -581,6 +582,41 @@
       </div>
       <hr style="border:none;border-top:1px solid #ecf0f1;margin:18px 0;">
       <button class="secondary-btn" onclick="triggerAlerts()" style="width:100%;">Run a scan now (test)</button>
+    </div>
+  </div>
+
+  <!-- Brief Modal: export a client's coverage over a date range -->
+  <div id="briefModal" class="modal">
+    <div class="modal-content">
+      <span class="close-modal" onclick="closeBriefModal()">&times;</span>
+      <h2>Coverage Briefing</h2>
+      <p style="font-size:13px;color:#777;margin-bottom:14px;">
+        A CSG-branded summary of a client's coverage over a date range, grouped by topic.
+        Open it to print or save as PDF, or download an editable Word file.
+      </p>
+      <div class="form-group">
+        <label>Client</label>
+        <select id="briefClient"></select>
+      </div>
+      <div class="form-group" style="display:flex;gap:10px;">
+        <div style="flex:1;">
+          <label>From</label>
+          <input type="date" id="briefFrom">
+        </div>
+        <div style="flex:1;">
+          <label>To</label>
+          <input type="date" id="briefTo">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button onclick="quickRange(7)" class="secondary-btn">Last 7 days</button>
+        <button onclick="quickRange(30)" class="secondary-btn">Last 30 days</button>
+      </div>
+      <hr style="border:none;border-top:1px solid #ecf0f1;margin:18px 0;">
+      <div style="display:flex;gap:8px;">
+        <button onclick="openBrief('html')" style="flex:1;">Open (print / PDF)</button>
+        <button onclick="openBrief('doc')" class="secondary-btn" style="flex:1;">Download Word</button>
+      </div>
     </div>
   </div>
 
@@ -1221,15 +1257,58 @@
         : 'Scan ran — no new stories matched a watch term.');
     }
 
-    // Fills the client dropdowns in the Add Feed / Add Topic / Alerts modals.
+    // --- Coverage briefing (export) ---
+    function fmtDate(d) {
+      const p = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    }
+    function quickRange(days) {
+      const to = new Date();
+      const from = new Date();
+      from.setDate(from.getDate() - days);
+      document.getElementById('briefFrom').value = fmtDate(from);
+      document.getElementById('briefTo').value = fmtDate(to);
+    }
+    function openBriefModal() {
+      const sel = document.getElementById('briefClient');
+      if (currentClientId != null) sel.value = String(currentClientId);
+      if (!document.getElementById('briefFrom').value) quickRange(7);
+      document.getElementById('briefModal').classList.add('open');
+    }
+    function closeBriefModal() {
+      document.getElementById('briefModal').classList.remove('open');
+    }
+    window.openBriefModal = openBriefModal;
+
+    function openBrief(format) {
+      const clientId = document.getElementById('briefClient').value;
+      const from = document.getElementById('briefFrom').value;
+      const to = document.getElementById('briefTo').value;
+      if (!clientId) { alert('Pick a client'); return; }
+      if (!from || !to) { alert('Pick a date range'); return; }
+      if (from > to) { alert('The "From" date must be on or before the "To" date'); return; }
+      const url = `/api/brief?clientId=${encodeURIComponent(clientId)}&from=${from}&to=${to}&format=${format}`;
+      if (format === 'doc') {
+        // Trigger a download without navigating the app away.
+        const a = document.createElement('a');
+        a.href = url; a.download = '';
+        document.body.appendChild(a); a.click(); a.remove();
+      } else {
+        window.open(url, '_blank');
+      }
+    }
+
+    // Fills the client dropdowns in the Add Feed / Add Topic / Alerts / Brief modals.
     function populateClientSelects() {
       const opts = clients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
       const fc = document.getElementById('feedClient');
       const cc = document.getElementById('categoryClient');
       const ac = document.getElementById('alertClient');
+      const bc = document.getElementById('briefClient');
       if (fc) { const prev = fc.value; fc.innerHTML = opts; if (prev) fc.value = prev; }
       if (cc) { const prev = cc.value; cc.innerHTML = opts; if (prev) cc.value = prev; }
       if (ac) { const prev = ac.value; ac.innerHTML = opts; if (prev) ac.value = prev; }
+      if (bc) { const prev = bc.value; bc.innerHTML = opts; if (prev) bc.value = prev; }
       updateCategorySelect();
     }
 
