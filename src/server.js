@@ -146,6 +146,51 @@ app.get('/api/config', (req, res) => {
   });
 });
 
+// --- Machine export door (Coverage Intelligence integration, 20 Aug 2026) ---
+// Read-only, token-gated, registered BEFORE the cookie wall. The coverage
+// tracker's intel sweep pulls recent articles for a client and matches them
+// against its own watch queries — the reader stays the curated feed layer,
+// the tracker stays the classifier. Fail closed: no INTEL_EXPORT_TOKEN set →
+// 503; wrong token → 401 (timing-safe). Token grants THIS endpoint only.
+const INTEL_EXPORT_TOKEN = process.env.INTEL_EXPORT_TOKEN || '';
+app.get('/api/export/articles', async (req, res) => {
+  if (!INTEL_EXPORT_TOKEN) {
+    return res.status(503).json({ error: 'Export not configured (INTEL_EXPORT_TOKEN unset)' });
+  }
+  const supplied = (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!supplied || !timingSafeMatch(supplied, INTEL_EXPORT_TOKEN)) {
+    return res.status(401).json({ error: 'Invalid export token' });
+  }
+  const clientName = String(req.query.client || '').trim();
+  if (!clientName || clientName.length > 100) {
+    return res.status(400).json({ error: 'client is required' });
+  }
+  const sinceHours = Math.min(Math.max(parseInt(req.query.sinceHours, 10) || 48, 1), 24 * 30);
+  try {
+    const result = await query(`
+      SELECT
+        a.title, a.url, a.description, a.published_at,
+        f.title as feed_title, f.url as feed_url, c.name as category,
+        (SELECT COUNT(*)::int FROM article_feed_hits h WHERE h.article_id = a.id) AS hit_count,
+        (SELECT string_agg(f2.title, ', ' ORDER BY f2.title)
+           FROM article_feed_hits h
+           JOIN feeds f2 ON f2.id = h.feed_id
+          WHERE h.article_id = a.id) AS seen_in
+      FROM articles a
+      JOIN feeds f ON a.feed_id = f.id
+      LEFT JOIN categories c ON f.category_id = c.id
+      LEFT JOIN clients cl ON f.client_id = cl.id
+      WHERE LOWER(cl.name) = LOWER($1)
+        AND COALESCE(a.published_at, a.created_at) >= NOW() - ($2 || ' hours')::interval
+      ORDER BY a.published_at DESC NULLS LAST
+      LIMIT 500
+    `, [clientName, String(sinceHours)]);
+    res.json({ client: clientName, sinceHours, count: result.rows.length, articles: result.rows });
+  } catch (err) {
+    handleDbError(res, err);
+  }
+});
+
 // All other /api routes require auth
 app.use('/api', requireAuth);
 
