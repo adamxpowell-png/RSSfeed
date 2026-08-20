@@ -10,6 +10,7 @@ import { initDatabase, query } from './database.js';
 import { startScheduler, triggerDigestNow, triggerAlertsNow, sendSelectionNow } from './scheduler.js';
 import { fetchFeeds, getUnreadArticles, backfillDedupeKeys } from './feedFetcher.js';
 import { getCoverage, renderBrief, isIsoDate, briefFilename } from './briefService.js';
+import { canonicalUrl } from './dedupe.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -185,7 +186,15 @@ app.get('/api/export/articles', async (req, res) => {
       ORDER BY a.published_at DESC NULLS LAST
       LIMIT 500
     `, [clientName, String(sinceHours)]);
-    res.json({ client: clientName, sinceHours, count: result.rows.length, articles: result.rows });
+    // Cross-system identity: expose the CANONICAL destination beside the
+    // stored raw link (Google News feeds store opaque redirect URLs — the
+    // consumer must key on the real article, or the same piece found via
+    // the GNews API would double-count). null = not recoverable.
+    const rows = result.rows.map((r) => {
+      const canon = canonicalUrl(r.url);
+      return { ...r, canonical_url: canon ? `https://${canon}` : null };
+    });
+    res.json({ client: clientName, sinceHours, count: rows.length, articles: rows });
   } catch (err) {
     handleDbError(res, err);
   }
